@@ -1,0 +1,18 @@
+{
+  "name": "private-whatsapp-gif-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A small private WhatsApp GIF bot powered by GIPHY",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "dotenv": "^17.2.3",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
