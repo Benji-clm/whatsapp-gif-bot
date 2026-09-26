@@ -46,7 +46,6 @@ async function searchGif(query) {
   }
   const choices = result.data.slice(0, 10).map(gif => ({
     url: gif.images?.fixed_height?.mp4 || gif.images?.original?.mp4,
-    page: gif.url,
   })).filter(gif => gif.url);
   if (!choices.length) {
     throw new Error('No WhatsApp-compatible GIFs found. Try a different search.');
@@ -123,7 +122,6 @@ async function handleMessage(sock, message) {
         gifPlayback: true,
 
         jpegThumbnail: Buffer.alloc(0),
-        caption: gif.page ? `Powered by GIPHY\n${gif.page}` : 'Powered by GIPHY',
       }, { quoted: message });
     } catch {
       throw new Error('Could not send the GIF to WhatsApp. Please try again.');
