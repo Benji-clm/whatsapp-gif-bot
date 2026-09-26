@@ -30,21 +30,13 @@ Replace the example path with your folder's actual location. Keep the generated 
 
 ## 3. Create your .env file
 
-Copy `.env.example` to a new file named exactly `.env` in the same folder as `index.js`.
-
-macOS/Linux:
+Create a new file named exactly `.env` in the same folder as `index.js`, and enter your GIPHY API Key under the variable name GIPHY_API_KEY. i.e.:
 
 ```sh
-cp .env.example .env
+GIPHY_API_KEY="EXAMPLE_API_KEY"
 ```
 
-Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-You can also copy it with your file manager. Make sure it is not accidentally named `.env.txt`.
+If you do not have an API key, follow the [GIPHY developer guide](https://developers.giphy.com/docs/api#quick-start-guide):
 
 ## 4. Add a GIPHY API key
 
