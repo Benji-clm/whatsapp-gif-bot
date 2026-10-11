@@ -22,6 +22,13 @@ const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
 const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
+const TFL_HELP = [
+  'TfL commands:',
+  'tfl <station>',
+  'tfl <from> to <station>',
+  'tfl status <station>',
+  'tfl crowd <station>',
+].join('\n');
 const TUBE_LINE_ALIASES = new Map([
   ['bakerloo', 'bakerloo'],
   ['central', 'central'],
@@ -120,6 +127,7 @@ function normalizeLine(value) {
 
 function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
+  if (/^help$/i.test(input)) return { type: 'help' };
   const status = input.match(/^status(?:\s+(.*))?$/i);
   if (status) return status[1]?.trim() ? { type: 'status', station: status[1].trim() } : { type: 'missing-status' };
   const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
@@ -364,6 +372,10 @@ async function planRailJourney(fromQuery, toQuery) {
 
 async function handleTfl(input, reply) {
   const request = parseTflRequest(input);
+  if (request.type === 'help') {
+    await reply(TFL_HELP);
+    return;
+  }
   if (request.type === 'missing') {
     await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
     return;

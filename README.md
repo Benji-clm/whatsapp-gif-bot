@@ -74,6 +74,8 @@ Use `tfl <station>` to receive up to eight live TfL rail departures, ordered by 
 tfl hammersmith
 ```
 
+Send `tfl help` in WhatsApp to see the short list of TfL commands.
+
 To show one Tube line only, add the explicit `line` qualifier:
 
 ```text
