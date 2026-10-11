@@ -25,6 +25,7 @@ const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
 const TFL_HELP = [
   'TfL commands:',
   'tfl <station>',
+  'tfl <station> line <line>',
   'tfl <from> to <station>',
   'tfl status <station>',
   'tfl crowd <station>',
@@ -150,17 +151,17 @@ async function fetchTfl(path, params = {}) {
   try {
     response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   } catch {
-    throw new Error('Could not reach TfL. Please try again shortly.');
+    throw new Error('🚂 Could not reach TfL. Please try again shortly. 🚂');
   }
   if (response.status === 401 || response.status === 403) {
-    throw new Error('TfL rejected TFL_APP_KEY. Check it in .env, or remove it to use the public API.');
+    throw new Error('🚂 TfL rejected TFL_APP_KEY. Check it in .env, or remove it to use the public API. 🚂');
   }
-  if (response.status === 429) throw new Error('TfL rate limit reached. Please try again later.');
-  if (!response.ok) throw new Error('TfL could not provide live departures. Please try again shortly.');
+  if (response.status === 429) throw new Error('🚂 TfL rate limit reached. Please try again later. 🚂');
+  if (!response.ok) throw new Error('🚂 TfL could not provide live departures. Please try again shortly. 🚂');
   try {
     return await response.json();
   } catch {
-    throw new Error('TfL returned an unexpected response. Please try again shortly.');
+    throw new Error('🚂 TfL returned an unexpected response. Please try again shortly. 🚂');
   }
 }
 
@@ -179,7 +180,7 @@ async function resolveRailStations(query) {
     modes: TFL_RAIL_MODES.join(','), maxResults: '10',
   });
   const matches = Array.isArray(search.matches) ? search.matches : [];
-  if (!matches.length) throw new Error(`No TfL rail station found for “${query}”. Try a fuller station name.`);
+  if (!matches.length) throw new Error(`🚂 No TfL rail station found for “${query}”. Try a fuller station name. 🚂`);
   const exact = matches.filter(match => isExactStationMatch(query, match));
   const selected = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
   if (!selected) {
@@ -207,6 +208,24 @@ async function resolveRailStations(query) {
       ? child.modes.some(mode => TFL_RAIL_MODE_SET.has(mode))
       : /^(940GZZLU|940GZZDL|910G)/i.test(child.id)
   ));
+  if (!railStations.length) {
+    // A few TfL hubs, including Chalfont & Latimer, omit their Underground
+    // child from children even though the hub's line metadata lists it.
+    const lineIds = railLineIds(stopPoint);
+    const stopLists = await Promise.all(lineIds.map(lineId => (
+      fetchTfl(`/Line/${encodeURIComponent(lineId)}/StopPoints`)
+    )));
+    const stationsFromLines = stopLists.flat().filter(stop => (
+      stop.hubNaptanCode === stopPoint.id
+      && stop.modes?.some(mode => TFL_RAIL_MODE_SET.has(mode))
+    ));
+    if (stationsFromLines.length) {
+      return {
+        name: displayStationName(selected.name),
+        stations: [...new Map(stationsFromLines.map(stop => [stop.id, stop])).values()],
+      };
+    }
+  }
   return {
     name: displayStationName(selected.name),
     stations: railStations.length ? railStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
@@ -371,44 +390,51 @@ async function planRailJourney(fromQuery, toQuery) {
 }
 
 async function handleTfl(input, reply) {
+  const tflReply = text => {
+    const [firstLine, ...remainingLines] = String(text).split('\n');
+    const startsWithTrain = firstLine.trimStart().startsWith('🚂');
+    const endsWithTrain = firstLine.trimEnd().endsWith('🚂');
+    const decoratedFirstLine = `${startsWithTrain ? firstLine : `🚂 ${firstLine}`}${endsWithTrain ? '' : ' 🚂'}`;
+    return reply([decoratedFirstLine, ...remainingLines].join('\n'));
+  };
   const request = parseTflRequest(input);
   if (request.type === 'help') {
-    await reply(TFL_HELP);
+    await tflReply(TFL_HELP);
     return;
   }
   if (request.type === 'missing') {
-    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
+    await tflReply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
     return;
   }
   if (request.type === 'missing-status') {
-    await reply('Usage: tfl status <station>');
+    await tflReply('Usage: tfl status <station>');
     return;
   }
   if (request.type === 'status') {
     console.log(`TfL status request received for: ${request.station}`);
     try {
       const status = await getStationStatus(request.station);
-      await reply(formatStationStatus(status.name, status.lines));
+      await tflReply(formatStationStatus(status.name, status.lines));
       console.log('TfL status sent.');
     } catch (error) {
       console.error('TfL status request failed:', error.message);
-      await reply(error.message);
+      await tflReply(error.message);
     }
     return;
   }
   if (request.type === 'missing-crowd') {
-    await reply('Usage: tfl crowd <station>');
+    await tflReply('Usage: tfl crowd <station>');
     return;
   }
   if (request.type === 'crowd') {
     console.log(`TfL crowding request received for: ${request.station}`);
     try {
       const crowding = await getLiveCrowding(request.station);
-      await reply(formatCrowding(crowding.name, crowding.readings));
+      await tflReply(formatCrowding(crowding.name, crowding.readings));
       console.log('TfL crowding sent.');
     } catch (error) {
       console.error('TfL crowding request failed:', error.message);
-      await reply(error.message);
+      await tflReply(error.message);
     }
     return;
   }
@@ -416,16 +442,16 @@ async function handleTfl(input, reply) {
     console.log(`TfL journey request received: ${request.from} to ${request.to}`);
     try {
       const plan = await planRailJourney(request.from, request.to);
-      await reply(formatJourney(plan.from, plan.to, plan.journey));
+      await tflReply(formatJourney(plan.from, plan.to, plan.journey));
       console.log('TfL journey sent.');
     } catch (error) {
       console.error('TfL journey request failed:', error.message);
-      await reply(error.message);
+      await tflReply(error.message);
     }
     return;
   }
   if (request.type === 'invalid-line') {
-    await reply('Use a supported line name, for example: tfl hammersmith line district');
+    await tflReply('Use a supported line name, for example: tfl hammersmith line district');
     return;
   }
   console.log(`TfL departure request received for: ${request.station}`);
@@ -433,11 +459,11 @@ async function handleTfl(input, reply) {
     const station = await resolveRailStations(request.station);
     const departureLists = await Promise.all(station.stations.map(stop => fetchTfl(`/StopPoint/${stop.id}/arrivals`)));
     const arrivals = departureLists.flat();
-    await reply(formatBoard(station.name, arrivals, request.lineId));
+    await tflReply(formatBoard(station.name, arrivals, request.lineId));
     console.log('TfL departures sent.');
   } catch (error) {
     console.error('TfL departure request failed:', error.message);
-    await reply(error.message);
+    await tflReply(error.message);
   }
 }
 
