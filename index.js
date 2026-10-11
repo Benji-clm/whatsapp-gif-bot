@@ -23,6 +23,7 @@ const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
 const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
 const TFL_EASTER_EGG_STATION = 'seven sisters';
+const TFL_HOME_REPLY = 'Sadly, TfL does not offer any direct connection to Tel Aviv for the moment, Bibi is working on it.';
 const TFL_HELP = [
   'TfL commands:',
   'tfl <station>',
@@ -134,6 +135,7 @@ function easterEggStation(value) {
 function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
   if (/^help$/i.test(input)) return { type: 'help' };
+  if (/^home$/i.test(input)) return { type: 'home' };
   const status = input.match(/^status(?:\s+(.*))?$/i);
   if (status) return status[1]?.trim() ? { type: 'status', station: status[1].trim() } : { type: 'missing-status' };
   const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
@@ -405,6 +407,10 @@ async function handleTfl(input, reply) {
   const request = parseTflRequest(input);
   if (request.type === 'help') {
     await tflReply(TFL_HELP);
+    return;
+  }
+  if (request.type === 'home') {
+    await reply(TFL_HOME_REPLY);
     return;
   }
   if (request.type === 'missing') {
