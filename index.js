@@ -114,7 +114,7 @@ function parseCommand(text) {
   if (/^gif(?:\s|$)/.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
   }
-  if (/^tfl(?:\s|$)/.test(text)) {
+  if (/^tfl(?:\s|$)/i.test(text)) {
     return { name: 'tfl', input: text.slice(3).trim() };
   }
   return null;
