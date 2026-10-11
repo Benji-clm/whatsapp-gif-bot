@@ -81,7 +81,7 @@ tfl hammersmith line district
 tfl hammersmith line h&c
 ```
 
-The supported line names are Bakerloo, Central, Circle, District, Hammersmith & City (`h&c`), Jubilee, Metropolitan, Northern, Piccadilly, Victoria, and Waterloo & City. The bot uses TfL's station search. It accepts some abbreviations, but if a short name matches multiple stations it lists the choices instead of guessing; for example, `tfl southken` can mean South Kenton or South Kensington. Use `tfl south kensington` in that case.
+The supported line names are Bakerloo, Central, Circle, District, Hammersmith & City (`h&c` or `hc`), Jubilee, Metropolitan, Northern, Piccadilly (also accepts the common `picadilly` misspelling), Victoria, and Waterloo & City. The bot uses TfL's station search. It accepts some abbreviations, but if a short name matches multiple stations it lists the choices instead of guessing; for example, `tfl southken` can mean South Kenton or South Kensington. Use `tfl south kensington` in that case.
 
 Journey planning is deliberately reserved for a later explicit syntax: `tfl <from> to <destination>`, such as `tfl hammersmith to southken`. It currently tells you that journey planning is not implemented, so a future feature will not conflict with station names or the optional line qualifier.
 

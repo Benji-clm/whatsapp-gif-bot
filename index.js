@@ -30,10 +30,12 @@ const TUBE_LINE_ALIASES = new Map([
   ['hammersmith-&-city', 'hammersmith-city'],
   ['h&c', 'hammersmith-city'],
   ['h-and-c', 'hammersmith-city'],
+  ['hc', 'hammersmith-city'],
   ['jubilee', 'jubilee'],
   ['metropolitan', 'metropolitan'],
   ['northern', 'northern'],
   ['piccadilly', 'piccadilly'],
+  ['picadilly', 'piccadilly'],
   ['victoria', 'victoria'],
   ['waterloo-city', 'waterloo-city'],
   ['waterloo-&-city', 'waterloo-city'],
@@ -168,8 +170,14 @@ async function resolveTubeStations(query) {
     throw new Error(`More than one Tube station matches “${query}”: ${names.join(', ')}. Try a fuller name.`);
   }
   const stopPoint = await fetchTfl(`/StopPoint/${selected.id}`);
+  // A search result with a 940GZZLU ID is already a station. Its children are
+  // individual platforms, whose arrival endpoints do not provide a full board.
+  if (/^940GZZLU/i.test(selected.id)) {
+    return { name: displayStationName(selected.name), stations: [{ id: selected.id }] };
+  }
   const children = Array.isArray(stopPoint.children) ? stopPoint.children : [];
-  const tubeStations = children.filter(child => child.modes?.includes('tube') || /^940GZZLU/i.test(child.id));
+  // A hub (for example Hammersmith) contains one or more physical stations.
+  const tubeStations = children.filter(child => /^940GZZLU/i.test(child.id));
   return {
     name: displayStationName(selected.name),
     stations: tubeStations.length ? tubeStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
