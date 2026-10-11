@@ -22,6 +22,7 @@ const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
 const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
 const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
+const TFL_EASTER_EGG_STATION = 'seven sisters';
 const TFL_HELP = [
   'TfL commands:',
   'tfl <station>',
@@ -126,6 +127,10 @@ function normalizeLine(value) {
   return TUBE_LINE_ALIASES.get(normalizeWords(value).replaceAll(' ', '-'));
 }
 
+function easterEggStation(value) {
+  return normalizeWords(value) === 'shit' ? TFL_EASTER_EGG_STATION : value;
+}
+
 function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
   if (/^help$/i.test(input)) return { type: 'help' };
@@ -134,10 +139,10 @@ function parseTflRequest(input) {
   const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
   if (crowd) return crowd[1]?.trim() ? { type: 'crowd', station: crowd[1].trim() } : { type: 'missing-crowd' };
   const journey = input.match(/^(.+?)\s+to\s+(.+)$/i);
-  if (journey) return { type: 'journey', from: journey[1].trim(), to: journey[2].trim() };
+  if (journey) return { type: 'journey', from: journey[1].trim(), to: easterEggStation(journey[2].trim()) };
   const line = input.match(/^(.+?)\s+line\s+(.+)$/i);
-  if (!line) return { type: 'board', station: input };
-  const station = line[1].trim();
+  if (!line) return { type: 'board', station: easterEggStation(input) };
+  const station = easterEggStation(line[1].trim());
   const lineId = normalizeLine(line[2]);
   if (!station || !lineId) return { type: 'invalid-line' };
   return { type: 'board', station, lineId };
