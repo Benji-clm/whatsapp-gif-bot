@@ -83,7 +83,13 @@ tfl hammersmith line h&c
 
 The supported line names are Bakerloo, Central, Circle, District, Hammersmith & City (`h&c` or `hc`), Jubilee, Metropolitan, Northern, Piccadilly (also accepts the common `picadilly` misspelling), Victoria, and Waterloo & City. The bot uses TfL's station search. It accepts some abbreviations, but if a short name matches multiple stations it lists the choices instead of guessing; for example, `tfl southken` can mean South Kenton or South Kensington. Use `tfl south kensington` in that case.
 
-Journey planning is deliberately reserved for a later explicit syntax: `tfl <from> to <destination>`, such as `tfl hammersmith to southken`. It currently tells you that journey planning is not implemented, so a future feature will not conflict with station names or the optional line qualifier.
+Use `tfl <from> to <destination>` for the quickest current Tube journey, for example:
+
+```text
+tfl hammersmith to south kensington
+```
+
+The reply shows the estimated duration, leave/arrival times, and each Tube leg. Both places are first resolved as Tube stations, so ambiguous abbreviations are rejected instead of guessed. For example, use `south kensington`, rather than `southken` (which can also mean South Kenton).
 
 Departure boards use TfL's public Unified API. You may optionally set `TFL_APP_KEY` in `.env` if you have an API key from TfL; the bot works without it for small personal use. Do not put the key in a message.
 
@@ -103,7 +109,7 @@ Temporary connection failures retry with delays up to 30 seconds. Logout, invali
 - **Dependency installation fails:** check your internet connection and Node version, then rerun `npm install`. Avoid installing an old Baileys version from a tutorial.
 - **Missing API key at startup:** check that `.env` is beside `index.js`, is not `.env.txt`, and contains your real `GIPHY_API_KEY`. Restart after editing it.
 - **QR does not scan:** enlarge the terminal or reduce its font size so the entire QR fits. Use the newest code shown; codes expire. Scan inside WhatsApp's Linked devices screen, not the normal camera app.
-- **No reply:** send from a different account, use `gif funny cat` or `tfl hammersmith`, and check the terminal says Connected. In groups, the spare account must be a member and allowed to send messages. `gift` is not a command. The terminal logs message event counts without their content: `own=1` means the message came from the bot's own account and is ignored. `GIF request received` or `TfL departure request received` means the command matched.
+- **No reply:** send from a different account, use `gif funny cat`, `tfl hammersmith`, or `tfl hammersmith to south kensington`, and check the terminal says Connected. In groups, the spare account must be a member and allowed to send messages. `gift` is not a command. The terminal logs message event counts without their content: `own=1` means the message came from the bot's own account and is ignored. `GIF request received`, `TfL departure request received`, or `TfL journey request received` means the command matched.
 - **TfL cannot find a station:** use a fuller station name. Short forms can be ambiguous. Add `line <name>` only after the station name, for example `tfl hammersmith line district`.
 - **Linked device says Google Chrome (Mac OS) on Linux:** this is Baileys' default client identification, not a detected operating system or a real browser. No Chrome process is launched. This label does not prevent receiving messages.
 - **Warning about disabling initial LID mapping sync:** update to this version and restart. The bot now allows Baileys' default initial sync. If an already-paired session still has mapping/decryption errors, follow the credential-backup and re-pair steps below to obtain a fresh initial sync.

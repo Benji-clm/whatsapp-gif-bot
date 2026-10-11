@@ -208,14 +208,65 @@ function formatBoard(name, arrivals, lineId) {
   }).join('\n')}`;
 }
 
+function timeFromTfl(dateTime) {
+  return dateTime?.match(/T(\d{2}:\d{2})/)?.[1] ?? 'unknown time';
+}
+
+function removeStationSuffix(name = '') {
+  return name.replace(/\s+(Underground|Rail|Bus) Station$/i, '');
+}
+
+function formatJourneyLeg(leg) {
+  const route = leg.routeOptions?.[0];
+  if (leg.mode?.id === 'tube' && route) {
+    const direction = removeStationSuffix(route.directions?.[0] ?? leg.arrivalPoint?.commonName);
+    return `${route.name}${direction ? ` → ${direction}` : ''}`;
+  }
+  const summary = leg.instruction?.summary?.replace(/<[^>]*>/g, '') || `Travel by ${leg.mode?.name ?? 'public transport'}`;
+  return `${summary} — ${leg.duration ?? '?'} min`;
+}
+
+function formatJourney(from, to, journey) {
+  const lines = journey.legs?.slice(0, 5).map(formatJourneyLeg).filter(Boolean) ?? [];
+  const times = `Leave ${timeFromTfl(journey.startDateTime)} · arrive ${timeFromTfl(journey.arrivalDateTime)}`;
+  return `${from} → ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.map(line => `• ${line}`).join('\n')}` : ''}`;
+}
+
+async function planTubeJourney(fromQuery, toQuery) {
+  const [from, to] = await Promise.all([resolveTubeStations(fromQuery), resolveTubeStations(toQuery)]);
+  const options = await Promise.all(from.stations.flatMap(fromStop => to.stations.map(async toStop => {
+    const result = await fetchTfl(
+      `/Journey/JourneyResults/${encodeURIComponent(fromStop.id)}/to/${encodeURIComponent(toStop.id)}`,
+      { mode: 'tube', journeyPreference: 'LeastTime' },
+    );
+    const journey = result.journeys?.reduce((quickest, candidate) => (
+      !quickest || candidate.duration < quickest.duration ? candidate : quickest
+    ), null);
+    return journey;
+  })));
+  const quickest = options.filter(Boolean).reduce((best, candidate) => (
+    !best || candidate.duration < best.duration ? candidate : best
+  ), null);
+  if (!quickest) throw new Error(`No Tube journey found from “${fromQuery}” to “${toQuery}”.`);
+  return { from: from.name, to: to.name, journey: quickest };
+}
+
 async function handleTfl(input, reply) {
   const request = parseTflRequest(input);
   if (request.type === 'missing') {
-    await reply('Usage: tfl <station> [line <line>]');
+    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>');
     return;
   }
   if (request.type === 'journey') {
-    await reply('Journey planning is not implemented yet. For departures, use: tfl <station>.');
+    console.log(`TfL journey request received: ${request.from} to ${request.to}`);
+    try {
+      const plan = await planTubeJourney(request.from, request.to);
+      await reply(formatJourney(plan.from, plan.to, plan.journey));
+      console.log('TfL journey sent.');
+    } catch (error) {
+      console.error('TfL journey request failed:', error.message);
+      await reply(error.message);
+    }
     return;
   }
   if (request.type === 'invalid-line') {
