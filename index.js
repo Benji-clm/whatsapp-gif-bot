@@ -120,6 +120,8 @@ function normalizeLine(value) {
 
 function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
+  const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
+  if (crowd) return crowd[1]?.trim() ? { type: 'crowd', station: crowd[1].trim() } : { type: 'missing-crowd' };
   const journey = input.match(/^(.+?)\s+to\s+(.+)$/i);
   if (journey) return { type: 'journey', from: journey[1].trim(), to: journey[2].trim() };
   const line = input.match(/^(.+?)\s+line\s+(.+)$/i);
@@ -262,6 +264,40 @@ function formatJourney(from, to, journey) {
   return `${from} → ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.join('\n')}` : ''}`;
 }
 
+function crowdDescription(ratio) {
+  if (ratio <= 0.5) return 'Quieter than usual';
+  if (ratio <= 0.8) return 'Below usual';
+  if (ratio <= 1.2) return 'About usual';
+  return 'Busier than usual';
+}
+
+function crowdTime(time) {
+  return time?.match(/(\d{2}:\d{2})(?::\d{2})?$/)?.[1];
+}
+
+function formatCrowding(name, readings) {
+  const available = readings.filter(reading => reading.data?.dataAvailable && Number.isFinite(reading.ratio));
+  if (!available.length) return `TfL does not currently publish live crowding data for ${name}.`;
+  const formatReading = ({ station, data, ratio }) => {
+    const percentage = Math.round(ratio * 100);
+    const updated = crowdTime(data.timeLocal ?? data.timeUtc);
+    return `${crowdDescription(ratio)} — ${percentage}% of usual level${updated ? ` (updated ${updated})` : ''}`;
+  };
+  if (available.length === 1) return `${name} crowding\n\n${formatReading(available[0])}`;
+  return `${name} crowding\n\n${available.map(reading => `${reading.station}: ${formatReading(reading)}`).join('\n')}`;
+}
+
+async function getLiveCrowding(query) {
+  const station = await resolveRailStations(query);
+  const readings = await Promise.all(station.stations.map(async stop => {
+    const data = await fetchTfl(`/Crowding/${stop.id}/Live`);
+    const ratio = Number(data.percentageOfBaseline ?? data.percentageOfBaseLine);
+    const stopName = stop.commonName?.replace(/\s+(Underground|Rail) Station$/i, '') || station.name;
+    return { station: stopName, data, ratio };
+  }));
+  return { name: station.name, readings };
+}
+
 async function planRailJourney(fromQuery, toQuery) {
   const [from, to] = await Promise.all([resolveRailStations(fromQuery), resolveRailStations(toQuery)]);
   const options = await Promise.all(from.stations.flatMap(fromStop => to.stations.map(async toStop => {
@@ -284,7 +320,23 @@ async function planRailJourney(fromQuery, toQuery) {
 async function handleTfl(input, reply) {
   const request = parseTflRequest(input);
   if (request.type === 'missing') {
-    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>');
+    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>');
+    return;
+  }
+  if (request.type === 'missing-crowd') {
+    await reply('Usage: tfl crowd <station>');
+    return;
+  }
+  if (request.type === 'crowd') {
+    console.log(`TfL crowding request received for: ${request.station}`);
+    try {
+      const crowding = await getLiveCrowding(request.station);
+      await reply(formatCrowding(crowding.name, crowding.readings));
+      console.log('TfL crowding sent.');
+    } catch (error) {
+      console.error('TfL crowding request failed:', error.message);
+      await reply(error.message);
+    }
     return;
   }
   if (request.type === 'journey') {
