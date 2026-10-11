@@ -20,11 +20,16 @@ const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
 const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
+const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
 const TUBE_LINE_ALIASES = new Map([
   ['bakerloo', 'bakerloo'],
   ['central', 'central'],
   ['circle', 'circle'],
   ['district', 'district'],
+  ['dlr', 'dlr'],
+  ['elizabeth', 'elizabeth'],
+  ['elizabeth-line', 'elizabeth'],
   ['hammersmith-city', 'hammersmith-city'],
   ['hammersmith-and-city', 'hammersmith-city'],
   ['hammersmith-&-city', 'hammersmith-city'],
@@ -148,7 +153,7 @@ async function fetchTfl(path, params = {}) {
 }
 
 function displayStationName(name) {
-  return name.replace(/\s+Underground Station$/i, '').replace(/\s+\([^)]*\)$/i, '');
+  return name.replace(/\s+(Underground|Rail) Station$/i, '').replace(/\s+\([^)]*\)$/i, '');
 }
 
 function isExactStationMatch(query, match) {
@@ -157,35 +162,42 @@ function isExactStationMatch(query, match) {
   return queryName === matchName;
 }
 
-async function resolveTubeStations(query) {
+async function resolveRailStations(query) {
   const search = await fetchTfl(`/StopPoint/Search/${encodeURIComponent(query)}`, {
-    modes: 'tube', maxResults: '10',
+    modes: TFL_RAIL_MODES.join(','), maxResults: '10',
   });
   const matches = Array.isArray(search.matches) ? search.matches : [];
-  if (!matches.length) throw new Error(`No Tube station found for “${query}”. Try a fuller station name.`);
+  if (!matches.length) throw new Error(`No TfL rail station found for “${query}”. Try a fuller station name.`);
   const exact = matches.filter(match => isExactStationMatch(query, match));
   const selected = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
   if (!selected) {
     const names = [...new Set(matches.slice(0, 5).map(match => displayStationName(match.name)))];
-    throw new Error(`More than one Tube station matches “${query}”: ${names.join(', ')}. Try a fuller name.`);
+    throw new Error(`More than one TfL rail station matches “${query}”: ${names.join(', ')}. Try a fuller name.`);
   }
   const stopPoint = await fetchTfl(`/StopPoint/${selected.id}`);
-  // A search result with a 940GZZLU ID is already a station. Its children are
+  // A non-hub search result is already a station. Its children are normally
   // individual platforms, whose arrival endpoints do not provide a full board.
-  if (/^940GZZLU/i.test(selected.id)) {
+  if (!/^HUB/i.test(selected.id)) {
     return { name: displayStationName(selected.name), stations: [{ id: selected.id }] };
   }
   const children = Array.isArray(stopPoint.children) ? stopPoint.children : [];
   // A hub (for example Hammersmith) contains one or more physical stations.
-  const tubeStations = children.filter(child => /^940GZZLU/i.test(child.id));
+  const railStations = children.filter(child => (
+    child.modes?.length
+      ? child.modes.some(mode => TFL_RAIL_MODE_SET.has(mode))
+      : /^(940GZZLU|940GZZDL|910G)/i.test(child.id)
+  ));
   return {
     name: displayStationName(selected.name),
-    stations: tubeStations.length ? tubeStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
+    stations: railStations.length ? railStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
   };
 }
 
 function lineName(lineId) {
-  return lineId === 'hammersmith-city' ? 'H&C' : lineId.replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+  if (lineId === 'hammersmith-city') return 'H&C';
+  if (lineId === 'elizabeth') return 'Elizabeth line';
+  if (lineId === 'dlr') return 'DLR';
+  return lineId.replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function arrivalTime(seconds) {
@@ -201,10 +213,11 @@ function formatBoard(name, arrivals, lineId) {
   const filtered = lineId ? uniqueArrivals.filter(arrival => arrival.lineId === lineId) : uniqueArrivals;
   const shown = filtered.sort((a, b) => a.timeToStation - b.timeToStation).slice(0, 8);
   const heading = `${name}${lineId ? ` — ${lineName(lineId)}` : ''} departures`;
-  if (!shown.length) return `${heading}\n\nNo live Tube departures are currently shown.`;
+  if (!shown.length) return `${heading}\n\nNo live TfL rail departures are currently shown.`;
   return `${heading}\n\n${shown.map(arrival => {
     const platform = arrival.platformName?.replace(/\s+-\s+/, ', ') || 'Platform unknown';
-    return `${lineName(arrival.lineId)} → ${arrival.towards || 'Unknown destination'} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
+    const service = `${arrival.lineName || lineName(arrival.lineId)}${arrival.towards ? ` → ${arrival.towards}` : ''}`;
+    return `${service} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
   }).join('\n')}`;
 }
 
@@ -216,9 +229,17 @@ function removeStationSuffix(name = '') {
   return name.replace(/\s+(Underground|Rail|Bus) Station$/i, '');
 }
 
+function journeyRouteName(leg) {
+  return leg.routeOptions?.[0]?.name ?? leg.mode?.name ?? leg.mode?.id;
+}
+
+function isRailJourneyLeg(leg) {
+  return TFL_RAIL_MODE_SET.has(leg.mode?.id) && Boolean(leg.routeOptions?.length);
+}
+
 function formatJourneyLeg(leg) {
   const route = leg.routeOptions?.[0];
-  if (leg.mode?.id === 'tube' && route) {
+  if (isRailJourneyLeg(leg) && route) {
     const direction = removeStationSuffix(route.directions?.[0] ?? leg.arrivalPoint?.commonName);
     return `${route.name}${direction ? ` → ${direction}` : ''}`;
   }
@@ -227,17 +248,26 @@ function formatJourneyLeg(leg) {
 }
 
 function formatJourney(from, to, journey) {
-  const lines = journey.legs?.slice(0, 5).map(formatJourneyLeg).filter(Boolean) ?? [];
+  const railLegs = journey.legs?.filter(isRailJourneyLeg) ?? [];
+  const lines = railLegs.flatMap((leg, index) => {
+    const output = [`* ${formatJourneyLeg(leg)}`];
+    const nextLeg = railLegs[index + 1];
+    if (nextLeg && journeyRouteName(nextLeg) !== journeyRouteName(leg)) {
+      const changeAt = removeStationSuffix(leg.arrivalPoint?.commonName);
+      if (changeAt) output.push(`* Change at ${changeAt}`);
+    }
+    return output;
+  });
   const times = `Leave ${timeFromTfl(journey.startDateTime)} · arrive ${timeFromTfl(journey.arrivalDateTime)}`;
-  return `${from} → ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.map(line => `• ${line}`).join('\n')}` : ''}`;
+  return `${from} → ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.join('\n')}` : ''}`;
 }
 
-async function planTubeJourney(fromQuery, toQuery) {
-  const [from, to] = await Promise.all([resolveTubeStations(fromQuery), resolveTubeStations(toQuery)]);
+async function planRailJourney(fromQuery, toQuery) {
+  const [from, to] = await Promise.all([resolveRailStations(fromQuery), resolveRailStations(toQuery)]);
   const options = await Promise.all(from.stations.flatMap(fromStop => to.stations.map(async toStop => {
     const result = await fetchTfl(
       `/Journey/JourneyResults/${encodeURIComponent(fromStop.id)}/to/${encodeURIComponent(toStop.id)}`,
-      { mode: 'tube', journeyPreference: 'LeastTime' },
+      { mode: TFL_RAIL_MODES.join(','), journeyPreference: 'LeastTime' },
     );
     const journey = result.journeys?.reduce((quickest, candidate) => (
       !quickest || candidate.duration < quickest.duration ? candidate : quickest
@@ -247,7 +277,7 @@ async function planTubeJourney(fromQuery, toQuery) {
   const quickest = options.filter(Boolean).reduce((best, candidate) => (
     !best || candidate.duration < best.duration ? candidate : best
   ), null);
-  if (!quickest) throw new Error(`No Tube journey found from “${fromQuery}” to “${toQuery}”.`);
+  if (!quickest) throw new Error(`No TfL rail journey found from “${fromQuery}” to “${toQuery}”.`);
   return { from: from.name, to: to.name, journey: quickest };
 }
 
@@ -260,7 +290,7 @@ async function handleTfl(input, reply) {
   if (request.type === 'journey') {
     console.log(`TfL journey request received: ${request.from} to ${request.to}`);
     try {
-      const plan = await planTubeJourney(request.from, request.to);
+      const plan = await planRailJourney(request.from, request.to);
       await reply(formatJourney(plan.from, plan.to, plan.journey));
       console.log('TfL journey sent.');
     } catch (error) {
@@ -270,12 +300,12 @@ async function handleTfl(input, reply) {
     return;
   }
   if (request.type === 'invalid-line') {
-    await reply('Use a Tube line name, for example: tfl hammersmith line district');
+    await reply('Use a supported line name, for example: tfl hammersmith line district');
     return;
   }
   console.log(`TfL departure request received for: ${request.station}`);
   try {
-    const station = await resolveTubeStations(request.station);
+    const station = await resolveRailStations(request.station);
     const departureLists = await Promise.all(station.stations.map(stop => fetchTfl(`/StopPoint/${stop.id}/arrivals`)));
     const arrivals = departureLists.flat();
     await reply(formatBoard(station.name, arrivals, request.lineId));

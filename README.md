@@ -66,9 +66,9 @@ A QR code appears in the terminal. Keep this terminal open and the computer conn
 
 The bot ignores its own account's messages, including messages typed on that account's phone. Commands are lowercase and must start at the beginning of the message: `gif <search>` searches GIPHY and bare `gif` replies with `Usage: gif <search>`. Trailing whitespace is allowed. Ordinary messages, words like `gift`, and the old `@gif-bot`/menu-mention commands are ignored.
 
-## Live Tube departures
+## Live rail departures
 
-Use `tfl <station>` to receive up to eight live Tube departures, ordered by expected arrival time:
+Use `tfl <station>` to receive up to eight live TfL rail departures, ordered by expected arrival time:
 
 ```text
 tfl hammersmith
@@ -81,7 +81,7 @@ tfl hammersmith line district
 tfl hammersmith line h&c
 ```
 
-The supported line names are Bakerloo, Central, Circle, District, Hammersmith & City (`h&c` or `hc`), Jubilee, Metropolitan, Northern, Piccadilly (also accepts the common `picadilly` misspelling), Victoria, and Waterloo & City. The bot uses TfL's station search. It accepts some abbreviations, but if a short name matches multiple stations it lists the choices instead of guessing; for example, `tfl southken` can mean South Kenton or South Kensington. Use `tfl south kensington` in that case.
+Departure boards and journeys cover Tube, Elizabeth line, London Overground, and DLR. This means `tfl reading` can show Elizabeth line departures. The optional `line` qualifier supports Tube lines, plus `elizabeth` and `dlr`. Supported Tube aliases include Hammersmith & City (`h&c` or `hc`) and the common `picadilly` misspelling. The bot uses TfL's station search. It accepts some abbreviations, but if a short name matches multiple stations it lists the choices instead of guessing; for example, `tfl southken` can mean South Kenton or South Kensington. Use `tfl south kensington` in that case.
 
 Use `tfl <from> to <destination>` for the quickest current Tube journey, for example:
 
@@ -89,7 +89,7 @@ Use `tfl <from> to <destination>` for the quickest current Tube journey, for exa
 tfl hammersmith to south kensington
 ```
 
-The reply shows the estimated duration, leave/arrival times, and each Tube leg. Both places are first resolved as Tube stations, so ambiguous abbreviations are rejected instead of guessed. For example, use `south kensington`, rather than `southken` (which can also mean South Kenton).
+The reply shows the estimated duration, leave/arrival times, and each rail leg. Where a route changes line, it also says where to change. Both places are first resolved as TfL rail stations, so ambiguous abbreviations are rejected instead of guessed. For example, use `south kensington`, rather than `southken` (which can also mean South Kenton).
 
 Departure boards use TfL's public Unified API. You may optionally set `TFL_APP_KEY` in `.env` if you have an API key from TfL; the bot works without it for small personal use. Do not put the key in a message.
 
