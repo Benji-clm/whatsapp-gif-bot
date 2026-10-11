@@ -64,7 +64,7 @@ A QR code appears in the terminal. Keep this terminal open and the computer conn
 4. Wait for the terminal to say **Connected**. A brief reconnect after pairing is normal.
 5. From a **different WhatsApp account**, send `gif funny cat` to the spare account. To test a group, add the spare account and send the same command from another member's account.
 
-The bot ignores its own account's messages, including messages typed on that account's phone. Commands are lowercase and must start at the beginning of the message: `gif <search>` searches GIPHY and bare `gif` replies with `Usage: gif <search>`. Trailing whitespace is allowed. Ordinary messages, words like `gift`, and the old `@gif-bot`/menu-mention commands are ignored.
+The bot ignores its own account's messages, including messages typed on that account's phone. Commands must start at the beginning of the message: lowercase `gif <search>` searches GIPHY and bare `gif` replies with `Usage: gif <search>`; `tfl` can use any capitalization. Trailing whitespace is allowed. Ordinary messages, words like `gift`, and the old `@gif-bot`/menu-mention commands are ignored.
 
 ## Live rail departures
 
@@ -92,6 +92,17 @@ tfl hammersmith to south kensington
 ```
 
 The reply shows the estimated duration, leave/arrival times, and each rail leg. Where a route changes line, it also says where to change. Both places are first resolved as TfL rail stations, so ambiguous abbreviations are rejected instead of guessed. For example, use `south kensington`, rather than `southken` (which can also mean South Kenton).
+
+## Rail network status
+
+Use `tfl line` to see the current status of every Tube line, London Overground route, DLR, and Elizabeth line. Add a line name to check just that one:
+
+```text
+tfl line
+tfl line district
+```
+
+The full-network reply is deliberately compact: one status per line. An individual-line lookup also includes TfL's disruption reason. Individual-line lookups support the usual Tube names plus DLR, Elizabeth, and named London Overground routes such as Mildmay or Windrush.
 
 ## Live crowding
 

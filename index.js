@@ -29,6 +29,7 @@ const TFL_HELP = [
   'tfl <station>',
   'tfl <station> line <line>',
   'tfl <from> to <station>',
+  'tfl line',
   'tfl status <station>',
   'tfl crowd <station>',
 ].join('\n');
@@ -54,6 +55,12 @@ const TUBE_LINE_ALIASES = new Map([
   ['victoria', 'victoria'],
   ['waterloo-city', 'waterloo-city'],
   ['waterloo-&-city', 'waterloo-city'],
+  ['liberty', 'liberty'],
+  ['lioness', 'lioness'],
+  ['mildmay', 'mildmay'],
+  ['suffragette', 'suffragette'],
+  ['weaver', 'weaver'],
+  ['windrush', 'windrush'],
 ]);
 
 async function searchGif(query) {
@@ -136,6 +143,12 @@ function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
   if (/^help$/i.test(input)) return { type: 'help' };
   if (/^home$/i.test(input)) return { type: 'home' };
+  const lineStatus = input.match(/^line(?:\s+(.*))?$/i);
+  if (lineStatus) {
+    if (!lineStatus[1]?.trim()) return { type: 'line-status' };
+    const lineId = normalizeLine(lineStatus[1]);
+    return lineId ? { type: 'line-status', lineId } : { type: 'invalid-status-line' };
+  }
   const status = input.match(/^status(?:\s+(.*))?$/i);
   if (status) return status[1]?.trim() ? { type: 'status', station: status[1].trim() } : { type: 'missing-status' };
   const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
@@ -246,10 +259,10 @@ function railLineIds(stop) {
   return groupedIds.length ? groupedIds : stop.lines?.map(line => line.id) ?? [];
 }
 
-function shortStatusReason(reason) {
+function shortStatusReason(reason, maximumLength = 220) {
   if (!reason) return '';
   const summary = reason.replace(/\s+/g, ' ').trim();
-  return summary.length > 220 ? `${summary.slice(0, 217)}…` : summary;
+  return summary.length > maximumLength ? `${summary.slice(0, maximumLength - 3)}…` : summary;
 }
 
 function formatStationStatus(name, lines) {
@@ -272,6 +285,37 @@ async function getStationStatus(query) {
     name: station.name,
     lines: Array.isArray(statuses) ? statuses.filter(line => TFL_RAIL_MODE_SET.has(line.modeName)) : [],
   };
+}
+
+function formatRailLineStatus(lines) {
+  const sortedLines = [...lines].sort((a, b) => a.name.localeCompare(b.name));
+  if (!sortedLines.length) return 'TfL rail line status\n\nNo rail line status is currently available.';
+  return `TfL rail line status\n\n${sortedLines.map(line => {
+    const statuses = [...new Set((line.lineStatuses ?? [])
+      .map(status => status.statusSeverityDescription)
+      .filter(Boolean))];
+    return `* ${line.name} — ${statuses.join(', ') || 'Status unavailable'}`;
+  }).join('\n')}`;
+}
+
+function formatDetailedRailLineStatus(lines) {
+  if (!lines.length) return 'TfL rail line status\n\nNo rail line status is currently available.';
+  return lines.map(line => {
+    const statuses = line.lineStatuses ?? [];
+    if (!statuses.length) return `TfL ${line.name} status\n\nStatus unavailable.`;
+    return `TfL ${line.name} status\n\n${statuses.map(status => {
+      const reason = shortStatusReason(status.reason, 700);
+      return `* ${status.statusSeverityDescription ?? 'Status unavailable'}${reason ? `\n  ${reason}` : ''}`;
+    }).join('\n')}`;
+  }).join('\n\n');
+}
+
+async function getRailLineStatus(lineId) {
+  const path = lineId
+    ? `/Line/${encodeURIComponent(lineId)}/Status`
+    : `/Line/Mode/${TFL_RAIL_MODES.map(encodeURIComponent).join(',')}/Status`;
+  const lines = await fetchTfl(path);
+  return Array.isArray(lines) ? lines.filter(line => TFL_RAIL_MODE_SET.has(line.modeName)) : [];
 }
 
 function lineName(lineId) {
@@ -413,8 +457,24 @@ async function handleTfl(input, reply) {
     await reply(TFL_HOME_REPLY);
     return;
   }
+  if (request.type === 'line-status') {
+    console.log(`TfL rail line status request received${request.lineId ? ` for ${request.lineId}` : ''}.`);
+    try {
+      const lines = await getRailLineStatus(request.lineId);
+      await tflReply(request.lineId ? formatDetailedRailLineStatus(lines) : formatRailLineStatus(lines));
+      console.log('TfL rail line status sent.');
+    } catch (error) {
+      console.error('TfL rail line status request failed:', error.message);
+      await tflReply(error.message);
+    }
+    return;
+  }
+  if (request.type === 'invalid-status-line') {
+    await tflReply('Use a supported line name, for example: tfl line district');
+    return;
+  }
   if (request.type === 'missing') {
-    await tflReply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
+    await tflReply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nLine status: tfl line [line]\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
     return;
   }
   if (request.type === 'missing-status') {
