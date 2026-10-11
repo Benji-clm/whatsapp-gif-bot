@@ -111,7 +111,7 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
-  if (/^gif(?:\s|$)/.test(text)) {
+  if (/^gif(?:\s|$)/i.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
   }
   if (/^tfl(?:\s|$)/i.test(text)) {
