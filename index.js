@@ -290,7 +290,7 @@ function formatBoard(name, arrivals, lineId) {
   if (!shown.length) return `${heading}\n\nNo live TfL rail departures are currently shown.`;
   return `${heading}\n\n${shown.map(arrival => {
     const platform = arrival.platformName?.replace(/\s+-\s+/, ', ') || 'Platform unknown';
-    const service = `${arrival.lineName || lineName(arrival.lineId)}${arrival.towards ? ` → ${arrival.towards}` : ''}`;
+    const service = `${arrival.lineName || lineName(arrival.lineId)}${arrival.towards ? ` ➤ ${arrival.towards}` : ''}`;
     return `${service} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
   }).join('\n')}`;
 }
@@ -315,7 +315,7 @@ function formatJourneyLeg(leg) {
   const route = leg.routeOptions?.[0];
   if (isRailJourneyLeg(leg) && route) {
     const direction = removeStationSuffix(route.directions?.[0] ?? leg.arrivalPoint?.commonName);
-    return `${route.name}${direction ? ` → ${direction}` : ''}`;
+    return `${route.name}${direction ? ` ➤ ${direction}` : ''}`;
   }
   const summary = leg.instruction?.summary?.replace(/<[^>]*>/g, '') || `Travel by ${leg.mode?.name ?? 'public transport'}`;
   return `${summary} — ${leg.duration ?? '?'} min`;
@@ -333,7 +333,7 @@ function formatJourney(from, to, journey) {
     return output;
   });
   const times = `Leave ${timeFromTfl(journey.startDateTime)} · arrive ${timeFromTfl(journey.arrivalDateTime)}`;
-  return `${from} → ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.join('\n')}` : ''}`;
+  return `${from} ➤ ${to}\n\n${journey.duration} min · ${times}${lines.length ? `\n${lines.join('\n')}` : ''}`;
 }
 
 function crowdDescription(ratio) {
