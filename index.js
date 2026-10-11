@@ -16,9 +16,28 @@ import { fileURLToPath } from 'node:url';
 const projectDir = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
+const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
 const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+const TUBE_LINE_ALIASES = new Map([
+  ['bakerloo', 'bakerloo'],
+  ['central', 'central'],
+  ['circle', 'circle'],
+  ['district', 'district'],
+  ['hammersmith-city', 'hammersmith-city'],
+  ['hammersmith-and-city', 'hammersmith-city'],
+  ['hammersmith-&-city', 'hammersmith-city'],
+  ['h&c', 'hammersmith-city'],
+  ['h-and-c', 'hammersmith-city'],
+  ['jubilee', 'jubilee'],
+  ['metropolitan', 'metropolitan'],
+  ['northern', 'northern'],
+  ['piccadilly', 'piccadilly'],
+  ['victoria', 'victoria'],
+  ['waterloo-city', 'waterloo-city'],
+  ['waterloo-&-city', 'waterloo-city'],
+]);
 
 async function searchGif(query) {
   const url = new URL('https://api.giphy.com/v1/gifs/search');
@@ -78,13 +97,134 @@ function parseCommand(text) {
   if (/^gif(?:\s|$)/.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
   }
-  if (/^tfl\s*$/.test(text)) return { name: 'tfl' };
+  if (/^tfl(?:\s|$)/.test(text)) {
+    return { name: 'tfl', input: text.slice(3).trim() };
+  }
   return null;
 }
 
-async function handleTfl(reply) {
-  // Add the TfL behavior here when it is ready.
-  await reply('The tfl command is not implemented yet.');
+function normalizeWords(value) {
+  return value.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function normalizeLine(value) {
+  return TUBE_LINE_ALIASES.get(normalizeWords(value).replaceAll(' ', '-'));
+}
+
+function parseTflRequest(input) {
+  if (!input) return { type: 'missing' };
+  const journey = input.match(/^(.+?)\s+to\s+(.+)$/i);
+  if (journey) return { type: 'journey', from: journey[1].trim(), to: journey[2].trim() };
+  const line = input.match(/^(.+?)\s+line\s+(.+)$/i);
+  if (!line) return { type: 'board', station: input };
+  const station = line[1].trim();
+  const lineId = normalizeLine(line[2]);
+  if (!station || !lineId) return { type: 'invalid-line' };
+  return { type: 'board', station, lineId };
+}
+
+async function fetchTfl(path, params = {}) {
+  const url = new URL(path, 'https://api.tfl.gov.uk');
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  if (tflApiKey) url.searchParams.set('app_key', tflApiKey);
+  let response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  } catch {
+    throw new Error('Could not reach TfL. Please try again shortly.');
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('TfL rejected TFL_APP_KEY. Check it in .env, or remove it to use the public API.');
+  }
+  if (response.status === 429) throw new Error('TfL rate limit reached. Please try again later.');
+  if (!response.ok) throw new Error('TfL could not provide live departures. Please try again shortly.');
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('TfL returned an unexpected response. Please try again shortly.');
+  }
+}
+
+function displayStationName(name) {
+  return name.replace(/\s+Underground Station$/i, '').replace(/\s+\([^)]*\)$/i, '');
+}
+
+function isExactStationMatch(query, match) {
+  const queryName = normalizeWords(query);
+  const matchName = normalizeWords(match.name).replace(/ underground station$/, '');
+  return queryName === matchName;
+}
+
+async function resolveTubeStations(query) {
+  const search = await fetchTfl(`/StopPoint/Search/${encodeURIComponent(query)}`, {
+    modes: 'tube', maxResults: '10',
+  });
+  const matches = Array.isArray(search.matches) ? search.matches : [];
+  if (!matches.length) throw new Error(`No Tube station found for “${query}”. Try a fuller station name.`);
+  const exact = matches.filter(match => isExactStationMatch(query, match));
+  const selected = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
+  if (!selected) {
+    const names = [...new Set(matches.slice(0, 5).map(match => displayStationName(match.name)))];
+    throw new Error(`More than one Tube station matches “${query}”: ${names.join(', ')}. Try a fuller name.`);
+  }
+  const stopPoint = await fetchTfl(`/StopPoint/${selected.id}`);
+  const children = Array.isArray(stopPoint.children) ? stopPoint.children : [];
+  const tubeStations = children.filter(child => child.modes?.includes('tube') || /^940GZZLU/i.test(child.id));
+  return {
+    name: displayStationName(selected.name),
+    stations: tubeStations.length ? tubeStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
+  };
+}
+
+function lineName(lineId) {
+  return lineId === 'hammersmith-city' ? 'H&C' : lineId.replace(/-/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function arrivalTime(seconds) {
+  if (seconds < 60) return 'due';
+  return `${Math.ceil(seconds / 60)} min`;
+}
+
+function formatBoard(name, arrivals, lineId) {
+  const uniqueArrivals = [...new Map(arrivals.map(arrival => [
+    `${arrival.lineId}|${arrival.towards}|${arrival.platformName}|${arrival.timeToStation}`,
+    arrival,
+  ])).values()];
+  const filtered = lineId ? uniqueArrivals.filter(arrival => arrival.lineId === lineId) : uniqueArrivals;
+  const shown = filtered.sort((a, b) => a.timeToStation - b.timeToStation).slice(0, 8);
+  const heading = `${name}${lineId ? ` — ${lineName(lineId)}` : ''} departures`;
+  if (!shown.length) return `${heading}\n\nNo live Tube departures are currently shown.`;
+  return `${heading}\n\n${shown.map(arrival => {
+    const platform = arrival.platformName?.replace(/\s+-\s+/, ', ') || 'Platform unknown';
+    return `${lineName(arrival.lineId)} → ${arrival.towards || 'Unknown destination'} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
+  }).join('\n')}`;
+}
+
+async function handleTfl(input, reply) {
+  const request = parseTflRequest(input);
+  if (request.type === 'missing') {
+    await reply('Usage: tfl <station> [line <line>]');
+    return;
+  }
+  if (request.type === 'journey') {
+    await reply('Journey planning is not implemented yet. For departures, use: tfl <station>.');
+    return;
+  }
+  if (request.type === 'invalid-line') {
+    await reply('Use a Tube line name, for example: tfl hammersmith line district');
+    return;
+  }
+  console.log(`TfL departure request received for: ${request.station}`);
+  try {
+    const station = await resolveTubeStations(request.station);
+    const departureLists = await Promise.all(station.stations.map(stop => fetchTfl(`/StopPoint/${stop.id}/arrivals`)));
+    const arrivals = departureLists.flat();
+    await reply(formatBoard(station.name, arrivals, request.lineId));
+    console.log('TfL departures sent.');
+  } catch (error) {
+    console.error('TfL departure request failed:', error.message);
+    await reply(error.message);
+  }
 }
 
 async function handleMessage(sock, message) {
@@ -96,7 +236,7 @@ async function handleMessage(sock, message) {
   if (!command) return;
   const reply = text => sock.sendMessage(jid, { text }, { quoted: message });
   if (command.name === 'tfl') {
-    await handleTfl(reply);
+    await handleTfl(command.input, reply);
     return;
   }
   const query = command.query;
