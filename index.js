@@ -120,6 +120,8 @@ function normalizeLine(value) {
 
 function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
+  const status = input.match(/^status(?:\s+(.*))?$/i);
+  if (status) return status[1]?.trim() ? { type: 'status', station: status[1].trim() } : { type: 'missing-status' };
   const crowd = input.match(/^crowd(?:\s+(.*))?$/i);
   if (crowd) return crowd[1]?.trim() ? { type: 'crowd', station: crowd[1].trim() } : { type: 'missing-crowd' };
   const journey = input.match(/^(.+?)\s+to\s+(.+)$/i);
@@ -180,7 +182,15 @@ async function resolveRailStations(query) {
   // A non-hub search result is already a station. Its children are normally
   // individual platforms, whose arrival endpoints do not provide a full board.
   if (!/^HUB/i.test(selected.id)) {
-    return { name: displayStationName(selected.name), stations: [{ id: selected.id }] };
+    return {
+      name: displayStationName(selected.name),
+      stations: [{
+        id: selected.id,
+        commonName: stopPoint.commonName,
+        lines: stopPoint.lines,
+        lineModeGroups: stopPoint.lineModeGroups,
+      }],
+    };
   }
   const children = Array.isArray(stopPoint.children) ? stopPoint.children : [];
   // A hub (for example Hammersmith) contains one or more physical stations.
@@ -192,6 +202,41 @@ async function resolveRailStations(query) {
   return {
     name: displayStationName(selected.name),
     stations: railStations.length ? railStations : [{ id: stopPoint.id, lines: stopPoint.lines }],
+  };
+}
+
+function railLineIds(stop) {
+  const groupedIds = stop.lineModeGroups
+    ?.filter(group => TFL_RAIL_MODE_SET.has(group.modeName))
+    .flatMap(group => group.lineIdentifier ?? []) ?? [];
+  return groupedIds.length ? groupedIds : stop.lines?.map(line => line.id) ?? [];
+}
+
+function shortStatusReason(reason) {
+  if (!reason) return '';
+  const summary = reason.replace(/\s+/g, ' ').trim();
+  return summary.length > 220 ? `${summary.slice(0, 217)}…` : summary;
+}
+
+function formatStationStatus(name, lines) {
+  const affected = lines.flatMap(line => (line.lineStatuses ?? [])
+    .filter(status => status.statusSeverityDescription !== 'Good Service')
+    .map(status => ({ line, status })));
+  if (!affected.length) return `${name} status\n\nNo reported problems on TfL rail lines serving this station.`;
+  return `${name} status\n\n${affected.map(({ line, status }) => {
+    const reason = shortStatusReason(status.reason);
+    return `* ${line.name} — ${status.statusSeverityDescription}${reason ? `\n  ${reason}` : ''}`;
+  }).join('\n')}`;
+}
+
+async function getStationStatus(query) {
+  const station = await resolveRailStations(query);
+  const lineIds = [...new Set(station.stations.flatMap(railLineIds))];
+  if (!lineIds.length) return { name: station.name, lines: [] };
+  const statuses = await fetchTfl(`/Line/${lineIds.map(encodeURIComponent).join(',')}/Status`);
+  return {
+    name: station.name,
+    lines: Array.isArray(statuses) ? statuses.filter(line => TFL_RAIL_MODE_SET.has(line.modeName)) : [],
   };
 }
 
@@ -320,7 +365,23 @@ async function planRailJourney(fromQuery, toQuery) {
 async function handleTfl(input, reply) {
   const request = parseTflRequest(input);
   if (request.type === 'missing') {
-    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>');
+    await reply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
+    return;
+  }
+  if (request.type === 'missing-status') {
+    await reply('Usage: tfl status <station>');
+    return;
+  }
+  if (request.type === 'status') {
+    console.log(`TfL status request received for: ${request.station}`);
+    try {
+      const status = await getStationStatus(request.station);
+      await reply(formatStationStatus(status.name, status.lines));
+      console.log('TfL status sent.');
+    } catch (error) {
+      console.error('TfL status request failed:', error.message);
+      await reply(error.message);
+    }
     return;
   }
   if (request.type === 'missing-crowd') {
