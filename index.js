@@ -1,7 +1,6 @@
 import dotenv from 'dotenv';
 import makeWASocket, {
   DisconnectReason,
-  jidNormalizedUser,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   useMultiFileAuthState,
@@ -75,16 +74,17 @@ async function downloadGif(url, destination) {
   }
 }
 
-function extractQuery(text, mentionedJids = [], user = {}) {
-  if (/^@gif-bot(?:\s|$)/.test(text)) return text.slice('@gif-bot'.length).trim();
-  const token = text.match(/^@([^\s]+)(?:\s|$)/)?.[1];
-  if (!token) return null;
-  const ownIds = [user.id, user.lid, user.phoneNumber].filter(Boolean).map(jidNormalizedUser);
-  const mentionsBot = mentionedJids.some(jid => {
-    const normalized = jidNormalizedUser(jid);
-    return ownIds.includes(normalized) && normalized.split('@')[0] === token;
-  });
-  return mentionsBot ? text.slice(token.length + 1).trim() : null;
+function parseCommand(text) {
+  if (/^gif(?:\s|$)/.test(text)) {
+    return { name: 'gif', query: text.slice(3).trim() };
+  }
+  if (/^tfl\s*$/.test(text)) return { name: 'tfl' };
+  return null;
+}
+
+async function handleTfl(reply) {
+  // Add the TfL behavior here when it is ready.
+  await reply('The tfl command is not implemented yet.');
 }
 
 async function handleMessage(sock, message) {
@@ -92,15 +92,16 @@ async function handleMessage(sock, message) {
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
   const text = content?.conversation ?? content?.extendedTextMessage?.text ?? '';
-  const mentionedJids = content?.extendedTextMessage?.contextInfo?.mentionedJid ?? [];
-  const query = extractQuery(text, mentionedJids, sock.user);
-  if (query === null) {
-    if (mentionedJids.length) console.log('Ignored mention: message must start with a mention of this bot account.');
+  const command = parseCommand(text);
+  if (!command) return;
+  const reply = text => sock.sendMessage(jid, { text }, { quoted: message });
+  if (command.name === 'tfl') {
+    await handleTfl(reply);
     return;
   }
-  const reply = text => sock.sendMessage(jid, { text }, { quoted: message });
+  const query = command.query;
   if (!query) {
-    await reply('Usage: @gif-bot <search>');
+    await reply('Usage: gif <search>');
     return;
   }
   if ([...query].length > 50) {
@@ -201,7 +202,7 @@ async function main() {
       }
       if (connection === 'open') {
         attempts = 0;
-        console.log('Connected. Waiting for @gif-bot <search> or a leading mention of this account.');
+        console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
       }
       if (connection === 'close') {
         sock.ev.removeAllListeners('messages.upsert');

@@ -1,6 +1,6 @@
 # Private WhatsApp GIF bot
 
-A small Node.js bot for a spare WhatsApp account. Send `@gif-bot funny cat` in a private chat with the bot or a group containing it, and it replies there with an animated GIF. You can type the literal text `@gif-bot`, or select the bot account from WhatsApp's mention menu at the start of the message and then type your search.
+A small Node.js bot for a spare WhatsApp account. Send `gif funny cat` in a private chat with the bot or a group containing it, and it replies there with an animated GIF. No @ or mention is needed. Sending just `tfl` reaches a separate command handler; for now it replies that the command is not implemented yet.
 
 Uses the maintained **`baileys` package, pinned to `7.0.0-rc14`**, verified against npm's latest tag and the [official release](https://github.com/WhiskeySockets/Baileys/releases/tag/v7.0.0-rc14). This is a release candidate. The project uses ESM imports, `connection.update` QR events, `creds.update` persistence, and supports private-chat LID addresses used by v7. It needs no automated browser, database, frontend, or video converter.
 
@@ -62,9 +62,9 @@ A QR code appears in the terminal. Keep this terminal open and the computer conn
 2. Open **Linked devices** (under Settings on iPhone, or the three-dot menu on Android).
 3. Tap **Link a device** and scan the terminal QR code with that phone.
 4. Wait for the terminal to say **Connected**. A brief reconnect after pairing is normal.
-5. From a **different WhatsApp account**, send `@gif-bot funny cat` to the spare account. To test a group, add the spare account and send the same command from another member's account.
+5. From a **different WhatsApp account**, send `gif funny cat` to the spare account. To test a group, add the spare account and send the same command from another member's account.
 
-The bot ignores its own account's messages, including messages typed on that account's phone. Other messages are ignored unless they start with the exact, lowercase `@gif-bot` command or a menu mention of the bot account, followed by whitespace or the end of the message. Sending just the command or mention replies with `Usage: @gif-bot <search>`.
+The bot ignores its own account's messages, including messages typed on that account's phone. Commands are lowercase and must start at the beginning of the message: `gif <search>` searches GIPHY, bare `gif` replies with `Usage: gif <search>`, and bare `tfl` calls the placeholder handler. Trailing whitespace is allowed. Ordinary messages, words like `gift`, and the old `@gif-bot`/menu-mention commands are ignored.
 
 Login credentials are saved in `auth/`, so later runs normally connect without another QR scan. Keep this folder private: its contents grant access to the linked account. Run only one instance using this folder. Anyone who can message the account, or shares a group with it, can invoke the bot; there is no allowlist.
 
@@ -82,7 +82,7 @@ Temporary connection failures retry with delays up to 30 seconds. Logout, invali
 - **Dependency installation fails:** check your internet connection and Node version, then rerun `npm install`. Avoid installing an old Baileys version from a tutorial.
 - **Missing API key at startup:** check that `.env` is beside `index.js`, is not `.env.txt`, and contains your real `GIPHY_API_KEY`. Restart after editing it.
 - **QR does not scan:** enlarge the terminal or reduce its font size so the entire QR fits. Use the newest code shown; codes expire. Scan inside WhatsApp's Linked devices screen, not the normal camera app.
-- **No reply:** send from a different account, start the message with literal `@gif-bot` or a menu mention of the bot, and check the terminal says Connected. In groups, the spare account must be a member and allowed to send messages. `@gif-botanytext` is not a command. The terminal logs message event counts without their content: `own=1` means the message came from the bot's own account and is ignored. `GIF request received` means the command matched.
+- **No reply:** send from a different account, use `gif funny cat` or `tfl`, and check the terminal says Connected. In groups, the spare account must be a member and allowed to send messages. `gift` is not a command. The terminal logs message event counts without their content: `own=1` means the message came from the bot's own account and is ignored. `GIF request received` means the GIF command matched.
 - **Linked device says Google Chrome (Mac OS) on Linux:** this is Baileys' default client identification, not a detected operating system or a real browser. No Chrome process is launched. This label does not prevent receiving messages.
 - **Warning about disabling initial LID mapping sync:** update to this version and restart. The bot now allows Baileys' default initial sync. If an already-paired session still has mapping/decryption errors, follow the credential-backup and re-pair steps below to obtain a fresh initial sync.
 - **GIPHY rejects the key:** check the key in your developer dashboard and `.env`. A rate-limit reply means wait before trying again. No results means try another phrase. Download or send errors can usually be retried.
