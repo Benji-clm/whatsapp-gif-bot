@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join, dirname } from 'node:path';
@@ -18,8 +18,11 @@ dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
+const scheduledDeletionsPath = join(projectDir, 'scheduled-deletions.json');
 const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+const AUTO_DELETE_DELAY_MS = 60 * 60 * 1000;
+const DELETE_RETRY_DELAY_MS = 60 * 1000;
 const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
 const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
 const TFL_EASTER_EGG_STATION = 'seven sisters';
@@ -62,6 +65,100 @@ const TUBE_LINE_ALIASES = new Map([
   ['weaver', 'weaver'],
   ['windrush', 'windrush'],
 ]);
+
+function createDeletionScheduler(getSocket) {
+  let pending = [];
+  let timer;
+  let writeQueue = Promise.resolve();
+
+  const persist = () => {
+    const contents = JSON.stringify(pending, null, 2);
+    writeQueue = writeQueue.then(async () => {
+      const temporaryPath = `${scheduledDeletionsPath}.tmp`;
+      await writeFile(temporaryPath, contents);
+      await rename(temporaryPath, scheduledDeletionsPath);
+    }).catch(error => {
+      console.error('Could not save scheduled message deletions:', error.message);
+    });
+    return writeQueue;
+  };
+
+  const scheduleNext = () => {
+    clearTimeout(timer);
+    const next = pending.reduce((soonest, item) => {
+      const dueAt = item.nextAttemptAt ?? item.deleteAt;
+      return !soonest || dueAt < soonest ? dueAt : soonest;
+    }, null);
+    if (next === null) return;
+    timer = setTimeout(() => { void deleteDueMessages(); }, Math.max(0, next - Date.now()));
+  };
+
+  const retryDueMessages = async () => {
+    const now = Date.now();
+    pending = pending.map(item => (item.deleteAt <= now ? {
+      ...item, nextAttemptAt: now + DELETE_RETRY_DELAY_MS,
+    } : item));
+    await persist();
+  };
+
+  const deleteDueMessages = async () => {
+    const now = Date.now();
+    const due = pending.filter(item => item.deleteAt <= now && (item.nextAttemptAt ?? 0) <= now);
+    if (!due.length) {
+      scheduleNext();
+      return;
+    }
+    const sock = getSocket();
+    if (!sock) {
+      await retryDueMessages();
+      scheduleNext();
+      return;
+    }
+    for (const item of due) {
+      try {
+        await sock.sendMessage(item.key.remoteJid, { delete: item.key });
+        pending = pending.filter(candidate => (
+          candidate.key.id !== item.key.id || candidate.key.remoteJid !== item.key.remoteJid
+        ));
+        console.log(`Deleted bot message ${item.key.id} for everyone.`);
+      } catch (error) {
+        console.error(`Could not delete bot message ${item.key.id}; will retry:`, error.message);
+        pending = pending.map(candidate => (
+          candidate.key.id === item.key.id && candidate.key.remoteJid === item.key.remoteJid ? {
+          ...candidate, nextAttemptAt: Date.now() + DELETE_RETRY_DELAY_MS,
+          } : candidate
+        ));
+      }
+    }
+    await persist();
+    scheduleNext();
+  };
+
+  return {
+    async load() {
+      try {
+        const stored = JSON.parse(await readFile(scheduledDeletionsPath, 'utf8'));
+        pending = Array.isArray(stored) ? stored.filter(item => (
+          item && Number.isFinite(item.deleteAt) && item.key?.id && item.key?.remoteJid
+        )) : [];
+      } catch (error) {
+        if (error.code !== 'ENOENT') console.error('Could not load scheduled message deletions:', error.message);
+      }
+      scheduleNext();
+    },
+    async track(key) {
+      if (!key?.id || !key.remoteJid) return;
+      pending.push({ key, deleteAt: Date.now() + AUTO_DELETE_DELAY_MS });
+      await persist();
+      scheduleNext();
+    },
+    deleteDueMessages,
+    async stop() {
+      clearTimeout(timer);
+      await writeQueue;
+    },
+  };
+}
 
 async function searchGif(query) {
   const url = new URL('https://api.giphy.com/v1/gifs/search');
@@ -538,14 +635,19 @@ async function handleTfl(input, reply) {
   }
 }
 
-async function handleMessage(sock, message) {
+async function handleMessage(sock, message, trackSentMessage) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
   const text = content?.conversation ?? content?.extendedTextMessage?.text ?? '';
   const command = parseCommand(text);
   if (!command) return;
-  const reply = text => sock.sendMessage(jid, { text }, { quoted: message });
+  const sendBotMessage = async (content, options = {}) => {
+    const sent = await sock.sendMessage(jid, content, { quoted: message, ...options });
+    await trackSentMessage(sent.key);
+    return sent;
+  };
+  const reply = text => sendBotMessage({ text });
   if (command.name === 'tfl') {
     await handleTfl(command.input, reply);
     return;
@@ -568,13 +670,13 @@ async function handleMessage(sock, message) {
     const filename = join(requestDir, 'animation.mp4');
     await downloadGif(gif.url, filename);
     try {
-      await sock.sendMessage(jid, {
+      await sendBotMessage({
         video: { url: filename },
         mimetype: 'video/mp4',
         gifPlayback: true,
 
         jpegThumbnail: Buffer.alloc(0),
-      }, { quoted: message });
+      });
     } catch {
       throw new Error('Could not send the GIF to WhatsApp. Please try again.');
     }
@@ -599,6 +701,11 @@ async function main() {
   let stopping = false;
   let credentialWrites = Promise.resolve();
   let messageQueue = Promise.resolve();
+  const deletionScheduler = createDeletionScheduler(() => socket);
+  await deletionScheduler.load();
+  const trackSentMessage = key => deletionScheduler.track(key).catch(error => {
+    console.error('Could not schedule deletion for a bot message:', error.message);
+  });
 
   async function stop(exitCode = 0) {
     if (stopping) return;
@@ -606,6 +713,7 @@ async function main() {
     clearTimeout(reconnectTimer);
     console.log('Stopping bot...');
     await messageQueue;
+    await deletionScheduler.stop();
     socket?.end(new Error('Bot stopped'));
     await credentialWrites;
     process.exitCode = exitCode;
@@ -654,6 +762,7 @@ async function main() {
       if (connection === 'open') {
         attempts = 0;
         console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
+        void deletionScheduler.deleteDueMessages();
       }
       if (connection === 'close') {
         sock.ev.removeAllListeners('messages.upsert');
@@ -675,7 +784,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });

@@ -5,5 +5,7 @@ node_modules/
 auth/
 auth-backup*/
 tmp/
+scheduled-deletions.json
+scheduled-deletions.json.tmp
 *.log
 .DS_Store

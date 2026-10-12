@@ -126,6 +126,12 @@ The reply lists affected Tube, Elizabeth line, London Overground, and DLR lines 
 
 Departure boards use TfL's public Unified API. You may optionally set `TFL_APP_KEY` in `.env` if you have an API key from TfL; the bot works without it for small personal use. Do not put the key in a message.
 
+## Automatic reply deletion
+
+Every message the bot sends is scheduled for deletion for everyone one hour later, including GIFs and error replies. The bot stores only the message references and deletion times in `scheduled-deletions.json`, so it can finish the job after a restart; this is not a database. If WhatsApp is temporarily disconnected at the scheduled time, the bot retries after it reconnects.
+
+WhatsApp replaces a deleted message with a visible “This message was deleted” notice. It cannot undo screenshots, forwards, or media that a recipient already saved.
+
 Login credentials are saved in `auth/`, so later runs normally connect without another QR scan. Keep this folder private: its contents grant access to the linked account. Run only one instance using this folder. Anyone who can message the account, or shares a group with it, can invoke the bot; there is no allowlist.
 
 ## How GIFs work
@@ -152,7 +158,7 @@ Temporary connection failures retry with delays up to 30 seconds. Logout, invali
 - **Credential or disk errors:** make sure this project folder is writable and there is free disk space.
 - **Temporary files left after a crash or power loss:** stop the bot and delete the project's `tmp/` folder using your file manager. It is recreated on startup. Normal success and failure paths clean up automatically.
 
-`.gitignore` excludes `.env`, authentication folders, `node_modules/`, and `tmp/`. Do not share QR codes or credential backups either. Baileys is an unofficial WhatsApp client; use a spare account and keep usage modest because accounts can be restricted.
+`.gitignore` excludes `.env`, authentication folders, `node_modules/`, `tmp/`, and the scheduled-deletion file. Do not share QR codes or credential backups either. Baileys is an unofficial WhatsApp client; use a spare account and keep usage modest because accounts can be restricted.
 
 You can check JavaScript syntax without connecting to WhatsApp:
 
