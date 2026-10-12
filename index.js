@@ -26,7 +26,6 @@ const DELETE_RETRY_DELAY_MS = 60 * 1000;
 const TFL_RAIL_MODES = ['tube', 'elizabeth-line', 'overground', 'dlr'];
 const TFL_RAIL_MODE_SET = new Set(TFL_RAIL_MODES);
 const TFL_EASTER_EGG_STATION = 'seven sisters';
-const TFL_HOME_REPLY = 'Sadly, TfL does not offer any direct connection to Tel Aviv for the moment, Bibi is working on it.';
 const TFL_HELP = [
   'TfL commands:',
   'tfl <station>',
@@ -240,6 +239,7 @@ function parseTflRequest(input) {
   if (!input) return { type: 'missing' };
   if (/^help$/i.test(input)) return { type: 'help' };
   if (/^home$/i.test(input)) return { type: 'home' };
+  if (/^bus$/i.test(input)) return { type: 'bus' };
   const lineStatus = input.match(/^line(?:\s+(.*))?$/i);
   if (lineStatus) {
     if (!lineStatus[1]?.trim()) return { type: 'line-status' };
@@ -551,7 +551,11 @@ async function handleTfl(input, reply) {
     return;
   }
   if (request.type === 'home') {
-    await reply(TFL_HOME_REPLY);
+    await reply('Sadly, TfL does not offer any direct connection to Tel Aviv for the moment, Bibi is working on it.');
+    return;
+  }
+  if (request.type === 'bus') {
+    await reply('Go fuck yourself.');
     return;
   }
   if (request.type === 'line-status') {
