@@ -34,6 +34,7 @@ const TFL_HELP = [
   'tfl line',
   'tfl status <station>',
   'tfl crowd <station>',
+  'tfl boat <station>',
 ].join('\n');
 const TUBE_LINE_ALIASES = new Map([
   ['bakerloo', 'bakerloo'],
@@ -240,6 +241,8 @@ function parseTflRequest(input) {
   if (/^help$/i.test(input)) return { type: 'help' };
   if (/^home$/i.test(input)) return { type: 'home' };
   if (/^bus$/i.test(input)) return { type: 'bus' };
+  const boat = input.match(/^boat(?:\s+(.*))?$/i);
+  if (boat) return boat[1]?.trim() ? { type: 'boat', pier: boat[1].trim() } : { type: 'missing-boat' };
   const lineStatus = input.match(/^line(?:\s+(.*))?$/i);
   if (lineStatus) {
     if (!lineStatus[1]?.trim()) return { type: 'line-status' };
@@ -349,6 +352,21 @@ async function resolveRailStations(query) {
   };
 }
 
+async function resolveRiverBusPier(query) {
+  const search = await fetchTfl(`/StopPoint/Search/${encodeURIComponent(query)}`, {
+    modes: 'river-bus', maxResults: '10',
+  });
+  const matches = Array.isArray(search.matches) ? search.matches : [];
+  if (!matches.length) throw new Error(`No TfL river-bus pier found for “${query}”. Try a fuller pier name.`);
+  const exact = matches.filter(match => isExactStationMatch(query, match));
+  const selected = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
+  if (!selected) {
+    const names = [...new Set(matches.slice(0, 5).map(match => match.name))];
+    throw new Error(`More than one TfL river-bus pier matches “${query}”: ${names.join(', ')}. Try a fuller name.`);
+  }
+  return { id: selected.id, name: selected.name };
+}
+
 function railLineIds(stop) {
   const groupedIds = stop.lineModeGroups
     ?.filter(group => TFL_RAIL_MODE_SET.has(group.modeName))
@@ -439,6 +457,24 @@ function formatBoard(name, arrivals, lineId) {
   return `${heading}\n\n${shown.map(arrival => {
     const platform = arrival.platformName?.replace(/\s+-\s+/, ', ') || 'Platform unknown';
     const service = `${arrival.lineName || lineName(arrival.lineId)}${arrival.towards ? ` ➤ ${arrival.towards}` : ''}`;
+    return `${service} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
+  }).join('\n')}`;
+}
+
+function formatBoatBoard(name, arrivals) {
+  const uniqueArrivals = [...new Map(arrivals.map(arrival => [
+    `${arrival.lineId}|${arrival.destinationName}|${arrival.platformName}|${arrival.timeToStation}`,
+    arrival,
+  ])).values()];
+  const shown = uniqueArrivals
+    .filter(arrival => arrival.modeName === 'river-bus')
+    .sort((a, b) => a.timeToStation - b.timeToStation)
+    .slice(0, 8);
+  const heading = `${name} river-bus departures`;
+  if (!shown.length) return `${heading}\n\nNo live river-bus departures are currently shown.`;
+  return `${heading}\n\n${shown.map(arrival => {
+    const platform = arrival.platformName || 'Pier berth unknown';
+    const service = `${arrival.lineName || lineName(arrival.lineId)}${arrival.destinationName ? ` → ${arrival.destinationName}` : ''}`;
     return `${service} — ${arrivalTime(arrival.timeToStation)} (${platform})`;
   }).join('\n')}`;
 }
@@ -575,7 +611,7 @@ async function handleTfl(input, reply) {
     return;
   }
   if (request.type === 'missing') {
-    await tflReply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nLine status: tfl line [line]\nCrowding: tfl crowd <station>\nStatus: tfl status <station>');
+    await tflReply('Usage: tfl <station> [line <line>]\nJourney: tfl <from> to <destination>\nLine status: tfl line [line]\nCrowding: tfl crowd <station>\nStatus: tfl status <station>\nBoat: tfl boat <station>');
     return;
   }
   if (request.type === 'missing-status') {
@@ -596,6 +632,23 @@ async function handleTfl(input, reply) {
   }
   if (request.type === 'missing-crowd') {
     await tflReply('Usage: tfl crowd <station>');
+    return;
+  }
+  if (request.type === 'missing-boat') {
+    await tflReply('Usage: tfl boat <station>');
+    return;
+  }
+  if (request.type === 'boat') {
+    console.log(`TfL river-bus request received for: ${request.pier}`);
+    try {
+      const pier = await resolveRiverBusPier(request.pier);
+      const arrivals = await fetchTfl(`/StopPoint/${pier.id}/arrivals`);
+      await tflReply(formatBoatBoard(pier.name, Array.isArray(arrivals) ? arrivals : []));
+      console.log('TfL river-bus departures sent.');
+    } catch (error) {
+      console.error('TfL river-bus request failed:', error.message);
+      await tflReply(error.message);
+    }
     return;
   }
   if (request.type === 'crowd') {
