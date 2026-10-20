@@ -7,6 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import { handleCoffee, isCoffeeCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -14,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectDir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: join(projectDir, '.env.coffee'), quiet: true });
 dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
@@ -215,6 +217,7 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
+  if (isCoffeeCommand(text)) return { name: 'coffee' };
   if (/^gif(?:\s|$)/i.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
   }
@@ -705,6 +708,10 @@ async function handleMessage(sock, message, trackSentMessage) {
     return sent;
   };
   const reply = text => sendBotMessage({ text });
+  if (command.name === 'coffee') {
+    await handleCoffee(sendBotMessage);
+    return;
+  }
   if (command.name === 'tfl') {
     await handleTfl(command.input, reply);
     return;

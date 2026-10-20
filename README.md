@@ -136,6 +136,31 @@ The reply lists affected Tube, Elizabeth line, London Overground, and DLR lines 
 
 Departure boards use TfL's public Unified API. You may optionally set `TFL_APP_KEY` in `.env` if you have an API key from TfL; the bot works without it for small personal use. Do not put the key in a message.
 
+## Coffee QR codes
+
+Send exactly `coffee` (any capitalization) to get a fresh Pret wallet QR image.
+The bot generates the timestamp, signature, and PNG when it handles the request.
+It keeps the PNG in memory and sends it through the normal reply/deletion path.
+The received image is static: request another just before use.
+
+Set `PRET_PUBLIC_ID` and `PRET_QR_SIGNING_KEY` in a private `.env.coffee` file
+beside `index.js`, or in the process environment. Both are required only for
+`coffee`; missing values do not disable GIF/TfL commands. No credentials are
+hardcoded in the source. Existing process environment values take precedence,
+then `.env.coffee`, then `.env`.
+
+See [Oracle VM deployment and private credential setup](docs/coffee-deployment.md).
+After setup, the VM needs only the project's Node dependencies—no Waydroid,
+Python, `qrencode` executable, or Pret API request. PNG rendering uses
+[`qrcode`](https://github.com/soldair/node-qrcode).
+
+This command follows the bot's existing access model: anyone able to invoke the
+bot can request the configured wallet's QR, including in groups. Keep the bot
+in chats where you intend to share that wallet. The configuration and QR images
+should be treated as private. The implementation reproduces the inspected
+Android app's device-time dynamic QR algorithm; live app comparison and till
+acceptance remain unverified.
+
 ## Automatic reply deletion
 
 Every message the bot sends is scheduled for deletion for everyone one hour later, including GIFs and error replies. The bot stores only the message references and deletion times in `scheduled-deletions.json`, so it can finish the job after a restart; this is not a database. If WhatsApp is temporarily disconnected at the scheduled time, the bot retries after it reconnects.

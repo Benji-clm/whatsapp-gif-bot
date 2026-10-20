@@ -6,13 +6,17 @@
   "description": "A small private WhatsApp GIF bot powered by GIPHY",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js"
+    "check": "node --check index.js && node --check coffee.js",
+    "test": "node --test coffee.test.js"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "baileys": "7.0.0-rc14",
     "dotenv": "^17.2.3",
     "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   }
 }
