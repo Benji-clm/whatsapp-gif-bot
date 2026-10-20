@@ -142,7 +142,7 @@ Send exactly `coffee` (any capitalization) to get a fresh Pret wallet QR image.
 The bot generates the timestamp, signature, and PNG when it handles the request.
 It keeps the PNG in memory and sends it through the normal reply/deletion path.
 The received image is static: request another just before use.
-Send `coffee used` after the QR has been redeemed. This records one use, starts the global 30-minute cooldown, and replies with today's count. The subscription allows five recorded uses per UK calendar day; at `5/5`, `coffee` replies with an error instead of a QR until the next day. A normal `coffee` request only generates a QR: it does not increment the count or reset the cooldown. If a use was marked less than 30 minutes ago, it gives the warning and still sends the QR.
+Send `coffee used` after the QR has been redeemed. This records one use, starts the global 30-minute cooldown, and replies with today's count. Send `coffee count` to check the count without changing it. The subscription allows five recorded uses per UK calendar day; at `5/5`, `coffee` replies with an error instead of a QR until the next day. A normal `coffee` request only generates a QR: it does not increment the count or reset the cooldown, but its QR caption shows today's count. If a use was marked less than 30 minutes ago, it gives the warning and still sends the QR.
 
 The use count and last-use time are saved locally so restarting the bot does not bypass the limit or cooldown.
 

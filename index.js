@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeUsedCommand } from './coffee.js';
+import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -236,6 +236,7 @@ async function downloadGif(url, destination) {
 
 function parseCommand(text) {
   if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
+  if (isCoffeeCountCommand(text)) return { name: 'coffee-count' };
   if (isCoffeeCommand(text)) return { name: 'coffee' };
   if (/^gif(?:\s|$)/i.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
@@ -714,7 +715,7 @@ async function handleTfl(input, reply) {
   }
 }
 
-async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed) {
+async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
@@ -729,6 +730,10 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
   const reply = text => sendBotMessage({ text });
   if (command.name === 'coffee-used') {
     await markCoffeeUsed(sendBotMessage);
+    return;
+  }
+  if (command.name === 'coffee-count') {
+    await showCoffeeCount(sendBotMessage);
     return;
   }
   if (command.name === 'coffee') {
@@ -819,8 +824,12 @@ async function main() {
     }
     const warning = coffeeCooldownWarning(usage.lastUsedAt);
     if (warning) await send({ text: warning });
-    if (!await handleCoffee(send)) return;
+    if (!await handleCoffee(send, process.env, `Pret Subscription QR code ☕\nUsed today: ${usage.usedCount}/${COFFEE_DAILY_LIMIT}`)) return;
     console.log(`Coffee QR sent (${usage.usedCount}/${COFFEE_DAILY_LIMIT} used today).`);
+  };
+  const showCoffeeCount = async send => {
+    const usage = currentCoffeeUsage();
+    await send({ text: `Coffee uses today: ${usage.usedCount}/${COFFEE_DAILY_LIMIT}.` });
   };
   const markCoffeeUsed = async send => {
     const usage = currentCoffeeUsage();
@@ -916,7 +925,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });

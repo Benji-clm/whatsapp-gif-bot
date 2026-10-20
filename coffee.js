@@ -12,6 +12,10 @@ export function isCoffeeUsedCommand(text) {
   return /^coffee\s+used\s*$/i.test(text);
 }
 
+export function isCoffeeCountCommand(text) {
+  return /^coffee\s+count\s*$/i.test(text);
+}
+
 export function coffeeUsageDay(now = Date.now()) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Europe/London',
@@ -59,14 +63,14 @@ export async function coffeeImage(env = process.env) {
   });
 }
 
-export async function handleCoffee(send, env = process.env) {
+export async function handleCoffee(send, env = process.env, caption = 'Pret Subscription QR code ☕') {
   if (!env.PRET_PUBLIC_ID?.trim() || !env.PRET_QR_SIGNING_KEY?.trim()) {
     await send({ text: 'Coffee is not configured. Ask the bot owner to set it up.' });
     return false;
   }
   try {
     const image = await coffeeImage(env);
-    await send({ image, caption: 'Pret Subscription QR code ☕' });
+    await send({ image, caption });
     return true;
   } catch {
     // Neither credentials nor the QR payload belong in logs or error replies.

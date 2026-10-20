@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeImage, coffeePayload, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeUsedCommand } from './coffee.js';
+import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeImage, coffeePayload, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 
 const env = { PRET_PUBLIC_ID: 'test-wallet-123', PRET_QR_SIGNING_KEY: 'test-signing-key' };
 
 test('exact coffee command, case insensitive, without matching ordinary phrases', () => {
   for (const text of ['coffee', 'COFFEE', 'Coffee \n']) assert.equal(isCoffeeCommand(text), true);
-  for (const text of ['coffeehouse', 'coffee please', 'coffee used', 'a coffee', 'gif coffee']) {
+  for (const text of ['coffeehouse', 'coffee please', 'coffee used', 'coffee count', 'a coffee', 'gif coffee']) {
     assert.equal(isCoffeeCommand(text), false);
   }
 });
@@ -15,6 +15,9 @@ test('coffee used command and UK usage day are recognized', () => {
   assert.equal(isCoffeeUsedCommand('coffee used'), true);
   assert.equal(isCoffeeUsedCommand('COFFEE USED  '), true);
   assert.equal(isCoffeeUsedCommand('coffee use'), false);
+  assert.equal(isCoffeeCountCommand('coffee count'), true);
+  assert.equal(isCoffeeCountCommand('COFFEE COUNT  '), true);
+  assert.equal(isCoffeeCountCommand('coffee counts'), false);
   assert.equal(COFFEE_DAILY_LIMIT, 5);
   assert.equal(coffeeUsageDay(Date.UTC(2026, 5, 30, 23, 30)), '2026-07-01');
 });
@@ -55,6 +58,12 @@ test('handler sends an image or an actionable unconfigured reply', async () => {
   assert.equal(await handleCoffee(async message => { replies.push(message); }, {}), false);
   assert.match(replies[1].text, /not configured/);
   assert.equal(replies[1].image, undefined);
+});
+
+test('handler accepts a usage caption for the QR', async () => {
+  const replies = [];
+  await handleCoffee(async message => { replies.push(message); }, env, 'Pret Subscription QR code ☕\nUsed today: 2/5');
+  assert.equal(replies[0].caption, 'Pret Subscription QR code ☕\nUsed today: 2/5');
 });
 
 test('send failure produces a generic retry reply without credentials', async t => {
