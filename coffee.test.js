@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { coffeeImage, coffeePayload, handleCoffee, isCoffeeCommand } from './coffee.js';
+import { coffeeCooldownWarning, coffeeImage, coffeePayload, handleCoffee, isCoffeeCommand } from './coffee.js';
 
 const env = { PRET_PUBLIC_ID: 'test-wallet-123', PRET_QR_SIGNING_KEY: 'test-signing-key' };
 
@@ -9,6 +9,13 @@ test('exact coffee command, case insensitive, without matching ordinary phrases'
   for (const text of ['coffeehouse', 'coffee please', 'a coffee', 'gif coffee']) {
     assert.equal(isCoffeeCommand(text), false);
   }
+});
+
+test('coffee cooldown warns until 30 minutes after the last successful QR', () => {
+  const lastSentAt = Date.UTC(2026, 0, 2, 12, 0);
+  assert.equal(coffeeCooldownWarning(lastSentAt, lastSentAt + (29 * 60 * 1000)),
+    "WARNING: Subscription may have been used less than 30 minutes ago, and won't work until: 02/01/2026, 12:30");
+  assert.equal(coffeeCooldownWarning(lastSentAt, lastSentAt + (30 * 60 * 1000)), null);
 });
 
 test('payload matches independent Python HMAC/Base64 fixture', () => {
@@ -34,10 +41,10 @@ test('image is a PNG and default timestamp is current', async () => {
 
 test('handler sends an image or an actionable unconfigured reply', async () => {
   const replies = [];
-  await handleCoffee(async message => { replies.push(message); }, env);
+  assert.equal(await handleCoffee(async message => { replies.push(message); }, env), true);
   assert.ok(Buffer.isBuffer(replies[0].image));
-  assert.match(replies[0].caption, /Fresh coffee/);
-  await handleCoffee(async message => { replies.push(message); }, {});
+  assert.match(replies[0].caption, /Pret Subscription QR/);
+  assert.equal(await handleCoffee(async message => { replies.push(message); }, {}), false);
   assert.match(replies[1].text, /not configured/);
   assert.equal(replies[1].image, undefined);
 });

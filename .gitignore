@@ -7,5 +7,7 @@ auth-backup*/
 tmp/
 scheduled-deletions.json
 scheduled-deletions.json.tmp
+coffee-cooldown.json
+coffee-cooldown.json.tmp
 *.log
 .DS_Store

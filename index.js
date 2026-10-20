@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { handleCoffee, isCoffeeCommand } from './coffee.js';
+import { coffeeCooldownWarning, handleCoffee, isCoffeeCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -20,6 +20,7 @@ dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
+const coffeeCooldownPath = join(projectDir, 'coffee-cooldown.json');
 const scheduledDeletionsPath = join(projectDir, 'scheduled-deletions.json');
 const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
@@ -160,6 +161,16 @@ function createDeletionScheduler(getSocket) {
       await writeQueue;
     },
   };
+}
+
+async function loadCoffeeLastSentAt() {
+  try {
+    const stored = JSON.parse(await readFile(coffeeCooldownPath, 'utf8'));
+    return Number.isSafeInteger(stored.lastSentAt) && stored.lastSentAt >= 0 ? stored.lastSentAt : null;
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.error('Could not load coffee cooldown:', error.message);
+    return null;
+  }
 }
 
 async function searchGif(query) {
@@ -695,7 +706,7 @@ async function handleTfl(input, reply) {
   }
 }
 
-async function handleMessage(sock, message, trackSentMessage) {
+async function handleMessage(sock, message, trackSentMessage, requestCoffee) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
@@ -709,7 +720,7 @@ async function handleMessage(sock, message, trackSentMessage) {
   };
   const reply = text => sendBotMessage({ text });
   if (command.name === 'coffee') {
-    await handleCoffee(sendBotMessage);
+    await requestCoffee(sendBotMessage);
     return;
   }
   if (command.name === 'tfl') {
@@ -765,11 +776,32 @@ async function main() {
   let stopping = false;
   let credentialWrites = Promise.resolve();
   let messageQueue = Promise.resolve();
+  let coffeeWrites = Promise.resolve();
+  let coffeeLastSentAt = await loadCoffeeLastSentAt();
   const deletionScheduler = createDeletionScheduler(() => socket);
   await deletionScheduler.load();
   const trackSentMessage = key => deletionScheduler.track(key).catch(error => {
     console.error('Could not schedule deletion for a bot message:', error.message);
   });
+  const saveCoffeeLastSentAt = () => {
+    const contents = JSON.stringify({ lastSentAt: coffeeLastSentAt });
+    coffeeWrites = coffeeWrites.then(async () => {
+      const temporaryPath = `${coffeeCooldownPath}.tmp`;
+      await writeFile(temporaryPath, contents);
+      await rename(temporaryPath, coffeeCooldownPath);
+    }).catch(error => {
+      console.error('Could not save coffee cooldown:', error.message);
+    });
+    return coffeeWrites;
+  };
+  const requestCoffee = async send => {
+    const warning = coffeeCooldownWarning(coffeeLastSentAt);
+    if (warning) await send({ text: warning });
+    if (!await handleCoffee(send)) return;
+    coffeeLastSentAt = Date.now();
+    await saveCoffeeLastSentAt();
+    console.log('Coffee QR sent; 30-minute cooldown started.');
+  };
 
   async function stop(exitCode = 0) {
     if (stopping) return;
@@ -778,6 +810,7 @@ async function main() {
     console.log('Stopping bot...');
     await messageQueue;
     await deletionScheduler.stop();
+    await coffeeWrites;
     socket?.end(new Error('Bot stopped'));
     await credentialWrites;
     process.exitCode = exitCode;
@@ -848,7 +881,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });
