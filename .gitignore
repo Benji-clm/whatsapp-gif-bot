@@ -9,5 +9,7 @@ scheduled-deletions.json
 scheduled-deletions.json.tmp
 coffee-cooldown.json
 coffee-cooldown.json.tmp
+coffee-usage.json
+coffee-usage.json.tmp
 *.log
 .DS_Store

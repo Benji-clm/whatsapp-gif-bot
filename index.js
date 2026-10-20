@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { coffeeCooldownWarning, handleCoffee, isCoffeeCommand } from './coffee.js';
+import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeUsedCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -20,7 +20,7 @@ dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
-const coffeeCooldownPath = join(projectDir, 'coffee-cooldown.json');
+const coffeeUsagePath = join(projectDir, 'coffee-usage.json');
 const scheduledDeletionsPath = join(projectDir, 'scheduled-deletions.json');
 const logger = pino({ level: 'warn' });
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024;
@@ -163,13 +163,20 @@ function createDeletionScheduler(getSocket) {
   };
 }
 
-async function loadCoffeeLastSentAt() {
+async function loadCoffeeUsage() {
   try {
-    const stored = JSON.parse(await readFile(coffeeCooldownPath, 'utf8'));
-    return Number.isSafeInteger(stored.lastSentAt) && stored.lastSentAt >= 0 ? stored.lastSentAt : null;
+    const stored = JSON.parse(await readFile(coffeeUsagePath, 'utf8'));
+    if (typeof stored.day !== 'string' || !Number.isInteger(stored.usedCount) || stored.usedCount < 0) {
+      throw new Error('Invalid saved data');
+    }
+    return {
+      day: stored.day,
+      usedCount: Math.min(stored.usedCount, COFFEE_DAILY_LIMIT),
+      lastUsedAt: Number.isSafeInteger(stored.lastUsedAt) && stored.lastUsedAt >= 0 ? stored.lastUsedAt : null,
+    };
   } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Could not load coffee cooldown:', error.message);
-    return null;
+    if (error.code !== 'ENOENT') console.error('Could not load coffee usage:', error.message);
+    return { day: coffeeUsageDay(), usedCount: 0, lastUsedAt: null };
   }
 }
 
@@ -228,6 +235,7 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
+  if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
   if (isCoffeeCommand(text)) return { name: 'coffee' };
   if (/^gif(?:\s|$)/i.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
@@ -706,7 +714,7 @@ async function handleTfl(input, reply) {
   }
 }
 
-async function handleMessage(sock, message, trackSentMessage, requestCoffee) {
+async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
@@ -719,6 +727,10 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee) {
     return sent;
   };
   const reply = text => sendBotMessage({ text });
+  if (command.name === 'coffee-used') {
+    await markCoffeeUsed(sendBotMessage);
+    return;
+  }
   if (command.name === 'coffee') {
     await requestCoffee(sendBotMessage);
     return;
@@ -777,30 +789,53 @@ async function main() {
   let credentialWrites = Promise.resolve();
   let messageQueue = Promise.resolve();
   let coffeeWrites = Promise.resolve();
-  let coffeeLastSentAt = await loadCoffeeLastSentAt();
+  let coffeeUsage = await loadCoffeeUsage();
   const deletionScheduler = createDeletionScheduler(() => socket);
   await deletionScheduler.load();
   const trackSentMessage = key => deletionScheduler.track(key).catch(error => {
     console.error('Could not schedule deletion for a bot message:', error.message);
   });
-  const saveCoffeeLastSentAt = () => {
-    const contents = JSON.stringify({ lastSentAt: coffeeLastSentAt });
+  const currentCoffeeUsage = () => {
+    const today = coffeeUsageDay();
+    if (coffeeUsage.day !== today) coffeeUsage = { day: today, usedCount: 0, lastUsedAt: null };
+    return coffeeUsage;
+  };
+  const saveCoffeeUsage = () => {
+    const contents = JSON.stringify(coffeeUsage);
     coffeeWrites = coffeeWrites.then(async () => {
-      const temporaryPath = `${coffeeCooldownPath}.tmp`;
+      const temporaryPath = `${coffeeUsagePath}.tmp`;
       await writeFile(temporaryPath, contents);
-      await rename(temporaryPath, coffeeCooldownPath);
+      await rename(temporaryPath, coffeeUsagePath);
     }).catch(error => {
-      console.error('Could not save coffee cooldown:', error.message);
+      console.error('Could not save coffee usage:', error.message);
     });
     return coffeeWrites;
   };
   const requestCoffee = async send => {
-    const warning = coffeeCooldownWarning(coffeeLastSentAt);
+    const usage = currentCoffeeUsage();
+    if (usage.usedCount >= COFFEE_DAILY_LIMIT) {
+      await send({ text: `Coffee limit reached for today (${COFFEE_DAILY_LIMIT}/${COFFEE_DAILY_LIMIT}). Try again tomorrow.` });
+      return;
+    }
+    const warning = coffeeCooldownWarning(usage.lastUsedAt);
     if (warning) await send({ text: warning });
     if (!await handleCoffee(send)) return;
-    coffeeLastSentAt = Date.now();
-    await saveCoffeeLastSentAt();
-    console.log('Coffee QR sent; 30-minute cooldown started.');
+    console.log(`Coffee QR sent (${usage.usedCount}/${COFFEE_DAILY_LIMIT} used today).`);
+  };
+  const markCoffeeUsed = async send => {
+    const usage = currentCoffeeUsage();
+    if (usage.usedCount >= COFFEE_DAILY_LIMIT) {
+      await send({ text: `Coffee is already at ${COFFEE_DAILY_LIMIT}/${COFFEE_DAILY_LIMIT} for today.` });
+      return;
+    }
+    coffeeUsage = {
+      ...usage,
+      usedCount: usage.usedCount + 1,
+      lastUsedAt: Date.now(),
+    };
+    await saveCoffeeUsage();
+    await send({ text: `Coffee marked as used (${coffeeUsage.usedCount}/${COFFEE_DAILY_LIMIT} today).` });
+    console.log(`Coffee use recorded (${coffeeUsage.usedCount}/${COFFEE_DAILY_LIMIT}); 30-minute cooldown started.`);
   };
 
   async function stop(exitCode = 0) {
@@ -881,7 +916,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });

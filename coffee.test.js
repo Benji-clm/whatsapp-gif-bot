@@ -1,21 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { coffeeCooldownWarning, coffeeImage, coffeePayload, handleCoffee, isCoffeeCommand } from './coffee.js';
+import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeImage, coffeePayload, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeUsedCommand } from './coffee.js';
 
 const env = { PRET_PUBLIC_ID: 'test-wallet-123', PRET_QR_SIGNING_KEY: 'test-signing-key' };
 
 test('exact coffee command, case insensitive, without matching ordinary phrases', () => {
   for (const text of ['coffee', 'COFFEE', 'Coffee \n']) assert.equal(isCoffeeCommand(text), true);
-  for (const text of ['coffeehouse', 'coffee please', 'a coffee', 'gif coffee']) {
+  for (const text of ['coffeehouse', 'coffee please', 'coffee used', 'a coffee', 'gif coffee']) {
     assert.equal(isCoffeeCommand(text), false);
   }
 });
 
-test('coffee cooldown warns until 30 minutes after the last successful QR', () => {
-  const lastSentAt = Date.UTC(2026, 0, 2, 12, 0);
-  assert.equal(coffeeCooldownWarning(lastSentAt, lastSentAt + (29 * 60 * 1000)),
+test('coffee used command and UK usage day are recognized', () => {
+  assert.equal(isCoffeeUsedCommand('coffee used'), true);
+  assert.equal(isCoffeeUsedCommand('COFFEE USED  '), true);
+  assert.equal(isCoffeeUsedCommand('coffee use'), false);
+  assert.equal(COFFEE_DAILY_LIMIT, 5);
+  assert.equal(coffeeUsageDay(Date.UTC(2026, 5, 30, 23, 30)), '2026-07-01');
+});
+
+test('coffee cooldown warns until 30 minutes after the last marked use', () => {
+  const lastUsedAt = Date.UTC(2026, 0, 2, 12, 0);
+  assert.equal(coffeeCooldownWarning(lastUsedAt, lastUsedAt + (29 * 60 * 1000)),
     "WARNING: Subscription may have been used less than 30 minutes ago, and won't work until: 02/01/2026, 12:30");
-  assert.equal(coffeeCooldownWarning(lastSentAt, lastSentAt + (30 * 60 * 1000)), null);
+  assert.equal(coffeeCooldownWarning(lastUsedAt, lastUsedAt + (30 * 60 * 1000)), null);
 });
 
 test('payload matches independent Python HMAC/Base64 fixture', () => {

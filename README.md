@@ -142,7 +142,9 @@ Send exactly `coffee` (any capitalization) to get a fresh Pret wallet QR image.
 The bot generates the timestamp, signature, and PNG when it handles the request.
 It keeps the PNG in memory and sends it through the normal reply/deletion path.
 The received image is static: request another just before use.
-After a successful QR send, the subscription has a global 30-minute cooldown. A request during that time receives a warning with the next available time, then still receives a fresh QR and resets the cooldown. The last-send timestamp is saved locally so restarting the bot does not bypass the cooldown.
+Send `coffee used` after the QR has been redeemed. This records one use, starts the global 30-minute cooldown, and replies with today's count. The subscription allows five recorded uses per UK calendar day; at `5/5`, `coffee` replies with an error instead of a QR until the next day. A normal `coffee` request only generates a QR: it does not increment the count or reset the cooldown. If a use was marked less than 30 minutes ago, it gives the warning and still sends the QR.
+
+The use count and last-use time are saved locally so restarting the bot does not bypass the limit or cooldown.
 
 Set `PRET_PUBLIC_ID` and `PRET_QR_SIGNING_KEY` in a private `.env.coffee` file
 beside `index.js`, or in the process environment. Both are required only for

@@ -2,9 +2,25 @@ import { createHmac } from 'node:crypto';
 import QRCode from 'qrcode';
 
 export const COFFEE_COOLDOWN_MS = 30 * 60 * 1000;
+export const COFFEE_DAILY_LIMIT = 5;
 
 export function isCoffeeCommand(text) {
   return /^coffee\s*$/i.test(text);
+}
+
+export function isCoffeeUsedCommand(text) {
+  return /^coffee\s+used\s*$/i.test(text);
+}
+
+export function coffeeUsageDay(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export function coffeeCooldownWarning(lastSentAt, now = Date.now()) {
