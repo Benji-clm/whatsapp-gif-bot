@@ -25,6 +25,23 @@ function httpUrl(value) {
   } catch { return null; }
 }
 
+function plainText(value) {
+  const entities = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' };
+  return String(value ?? '').replace(/<br\s*\/?\s*>/gi, '\n').replace(/<[^>]*>/g, '')
+    .replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt|nbsp);/gi, (match, entity) => {
+      if (!entity.startsWith('#')) return entities[entity.toLowerCase()];
+      const code = entity[1].toLowerCase() === 'x'
+        ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }).replace(/\u00a0/g, ' ').trim();
+}
+
+function isGenericNasaImage(apod) {
+  return /^NASA(?: Science)?$/i.test(plainText(apod.title)) ||
+    [apod.hdurl, apod.url].some(url => typeof url === 'string' &&
+      /(?:nasa[-_]logo|\/wp-content\/themes\/)/i.test(url));
+}
+
 export async function nasaMessage(date, { apiKey, fetchImpl = fetch } = {}) {
   if (!apiKey?.trim()) throw new Error('Set NASA_API_KEY in .env to enable NASA posts.');
   const endpoint = new URL('https://api.nasa.gov/planetary/apod');
@@ -32,14 +49,25 @@ export async function nasaMessage(date, { apiKey, fetchImpl = fetch } = {}) {
   endpoint.searchParams.set('date', date);
   const response = await fetchImpl(endpoint, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`NASA API returned HTTP ${response.status}.`);
-  const apod = await response.json();
+  let apod = await response.json();
+  // The legacy API sometimes scrapes the site's header logo instead of APOD.
+  // Recover the same date from NASA's canonical WordPress APOD feed.
+  if (isGenericNasaImage(apod)) {
+    const source = await fetchImpl(
+      `https://science.nasa.gov/wp-json/wp/v2/apod-basic/${date.replaceAll('-', '').slice(2)}`,
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    if (!source.ok) throw new Error(`NASA APOD source returned HTTP ${source.status}.`);
+    apod = await source.json();
+    if (isGenericNasaImage(apod)) throw new Error('NASA returned a logo instead of the daily picture.');
+  }
   if (apod.date !== date || !apod.title || !apod.explanation) {
     throw new Error('NASA has not returned a complete APOD for today.');
   }
   const link = httpUrl(apod.permalink) || httpUrl(apod.url);
   const caption = [
-    `NASA Astronomy Picture of the Day — ${date}`, apod.title, apod.explanation,
-    apod.copyright ? `Credit: ${apod.copyright}` : null, link,
+    `NASA Astronomy Picture of the Day — ${date}`, plainText(apod.title), plainText(apod.explanation),
+    apod.copyright ? `Credit: ${plainText(apod.copyright)}` : null, link,
   ].filter(Boolean).join('\n\n');
   if (apod.media_type !== 'image') {
     if (!link) throw new Error('NASA returned no usable media link.');

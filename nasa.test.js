@@ -105,3 +105,38 @@ test('unavailable or stale APOD and invalid media fail before sending', async ()
 test('NASA requires an explicit API key before fetching', async () => {
   await assert.rejects(nasaMessage(apod.date, { fetchImpl: () => { assert.fail('must not fetch'); } }), /Set NASA_API_KEY/);
 });
+
+test('NASA logo regression: recover same-date photo and readable description from source', async () => {
+  const calls = [];
+  const logo = 'https://science.nasa.gov/wp-content/themes/nasa-child/assets/images/nasa-logo@2x.png';
+  const broken = { ...apod, title: 'NASA Science', hdurl: logo, url: logo, permalink: undefined };
+  const source = { ...apod, title: 'An Anticrepuscular Rainbow Fan',
+    explanation: '<strong>Explanation:&nbsp;</strong>A <a href="https://example.com">rainbow</a> &amp; rays.<br><br>More &#039;detail&#039;.',
+    copyright: '<a href="mailto:private@example.com">Photo Author</a>',
+  };
+  const message = await nasaMessage(apod.date, { apiKey: 'test-key', fetchImpl: async url => {
+    calls.push(String(url));
+    if (calls.length === 1) return Response.json(broken);
+    if (calls.length === 2) return Response.json(source);
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/jpeg' } });
+  } });
+  assert.equal(calls[1], 'https://science.nasa.gov/wp-json/wp/v2/apod-basic/261020');
+  assert.equal(calls[2], apod.hdurl);
+  assert.ok(!calls.includes(logo));
+  assert.ok(message.caption.includes(source.title));
+  assert.ok(message.caption.includes("Explanation: A rainbow & rays.\n\nMore 'detail'."));
+  assert.ok(message.caption.includes('Credit: Photo Author'));
+  assert.ok(!message.caption.includes('<a'));
+});
+
+test('bad fallback never sends a logo or a different date', async () => {
+  const broken = { ...apod, title: 'NASA Science', hdurl: 'https://example.com/nasa-logo.png' };
+  for (const source of [broken, { ...apod, date: '2026-10-19' }]) {
+    let calls = 0;
+    await assert.rejects(nasaMessage(apod.date, { apiKey: 'test-key', fetchImpl: async () => {
+      calls++;
+      return Response.json(calls === 1 ? broken : source);
+    } }), /logo|complete APOD/);
+    assert.equal(calls, 2);
+  }
+});
