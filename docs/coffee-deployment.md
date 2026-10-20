@@ -49,7 +49,6 @@ local `.env` over the VM's `.env`.
    chmod 600 .env.coffee
    npm ci
    npm run check
-   npm test
    ```
 
    Ensure `.env.coffee` is owned by the account running Node so it can read it.
