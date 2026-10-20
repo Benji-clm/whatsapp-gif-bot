@@ -7,6 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import { createNasaScheduler, londonDate, nasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -18,6 +19,8 @@ const projectDir = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(projectDir, '.env.coffee'), quiet: true });
 dotenv.config({ path: join(projectDir, '.env'), quiet: true });
 const apiKey = process.env.GIPHY_API_KEY?.trim();
+const nasaApiKey = process.env.NASA_API_KEY?.trim();
+const nasaGroupJid = process.env.NASA_GROUP_JID?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
 const coffeeUsagePath = join(projectDir, 'coffee-usage.json');
@@ -235,6 +238,7 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
+  if (/^nasa\s*$/i.test(text)) return { name: 'nasa' };
   if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
   if (isCoffeeCountCommand(text)) return { name: 'coffee-count' };
   if (isCoffeeCommand(text)) return { name: 'coffee' };
@@ -728,6 +732,25 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
     return sent;
   };
   const reply = text => sendBotMessage({ text });
+  if (command.name === 'nasa') {
+    if (!nasaApiKey) {
+      await reply('NASA is not configured. Set NASA_API_KEY in the bot’s .env and restart it.');
+      return;
+    }
+    console.log('NASA request received.');
+    try {
+      const content = await nasaMessage(londonDate(Date.now()), {
+        apiKey: nasaApiKey,
+      });
+      // Manual NASA posts are permanent too, just like the daily post.
+      await sock.sendMessage(jid, content, { quoted: message });
+      console.log('NASA APOD sent.');
+    } catch {
+      console.error('NASA request failed.');
+      await reply('Could not fetch or send today’s NASA post. It may not be available yet; please try again later.');
+    }
+    return;
+  }
   if (command.name === 'coffee-used') {
     await markCoffeeUsed(sendBotMessage);
     return;
@@ -788,6 +811,15 @@ async function main() {
   await mkdir(tempDir, { recursive: true });
   const { state, saveCreds } = await useMultiFileAuthState(join(projectDir, 'auth'));
   let socket;
+  let connected = false;
+  const nasaScheduler = createNasaScheduler(async date => {
+    if (!connected) throw new Error('WhatsApp is disconnected.');
+    const content = await nasaMessage(date, { apiKey: nasaApiKey });
+    if (!connected || stopping) throw new Error('WhatsApp is unavailable.');
+    // Scheduled NASA posts deliberately bypass automatic reply deletion.
+    await socket.sendMessage(nasaGroupJid, content);
+    console.log(`NASA APOD sent for ${date}.`);
+  });
   let reconnectTimer;
   let attempts = 0;
   let stopping = false;
@@ -852,6 +884,7 @@ async function main() {
     stopping = true;
     clearTimeout(reconnectTimer);
     console.log('Stopping bot...');
+    await nasaScheduler.stop();
     await messageQueue;
     await deletionScheduler.stop();
     await coffeeWrites;
@@ -901,11 +934,13 @@ async function main() {
         qrcode.generate(qr, { small: true });
       }
       if (connection === 'open') {
+        connected = true;
         attempts = 0;
         console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
         void deletionScheduler.deleteDueMessages();
       }
       if (connection === 'close') {
+        connected = false;
         sock.ev.removeAllListeners('messages.upsert');
         const code = lastDisconnect?.error?.output?.statusCode;
         console.log(`WhatsApp connection closed (code ${code ?? 'unknown'}).`);
@@ -929,6 +964,11 @@ async function main() {
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });
+  }
+  if (nasaApiKey && /^\d+(?:-\d+)?@g\.us$/.test(nasaGroupJid ?? '')) {
+    nasaScheduler.start();
+  } else {
+    console.log('Daily NASA posts disabled: set NASA_API_KEY and a valid NASA_GROUP_JID in .env.');
   }
   connect();
 }

@@ -164,9 +164,48 @@ should be treated as private. The implementation reproduces the inspected
 Android app's device-time dynamic QR algorithm; live app comparison and till
 acceptance remain unverified.
 
+## Daily NASA post
+
+At **09:00 Europe/London** every day, the running bot posts NASA's Astronomy
+Picture of the Day to the group configured by `NASA_GROUP_JID`. GMT/BST changes are automatic,
+regardless of the server's timezone. Posts include the title, date, full NASA
+explanation, source link, and credit when supplied. Video/iframe days send the
+APOD page link and description instead of an image. NASA posts are permanent:
+they bypass the bot's one-hour deletion queue.
+
+Send exactly `nasa` (any capitalization) in a private chat or group with the bot
+to request today's post immediately in that chat. This fetches the image or
+video link and full explanation again, without changing the daily schedule.
+Successful manual NASA posts are permanent too; error replies follow the normal
+one-hour deletion policy. Each request calls NASA's API, so frequent requests
+can hit your API key's rate limit.
+
+One sleeping Node timer schedules the next morning; there is no polling loop,
+external cron job, extra WhatsApp session, or last-posted file. Reconnecting does
+not create another timer. Run only one bot instance. The bot and WhatsApp
+connection must be available at 09:00: failed posts are logged and skipped,
+with no catch-up or retries until the following morning. A timer delayed by a
+suspended machine by a minute or more is also skipped. Restarting after 09:00
+schedules tomorrow's post.
+
+Set both values in your private, gitignored `.env` (blank examples are also in
+`.env.example`):
+
+```dotenv
+NASA_GROUP_JID=
+NASA_API_KEY=
+```
+
+Enter your target group's ID and your own key from [NASA](https://api.nasa.gov/).
+There is no default group or API key. Daily posts stay disabled until both are
+configured with a valid group ID; the manual `nasa` command only needs the key.
+Never commit your populated `.env` or put real IDs/keys in `.env.example`. API requests and image downloads have 30-second timeouts;
+images have a 16 MiB download limit. Restart the bot after deploying these files
+or changing configuration. No test post is sent on startup.
+
 ## Automatic reply deletion
 
-Every message the bot sends is scheduled for deletion for everyone one hour later, including GIFs and error replies. The bot stores only the message references and deletion times in `scheduled-deletions.json`, so it can finish the job after a restart; this is not a database. If WhatsApp is temporarily disconnected at the scheduled time, the bot retries after it reconnects.
+Every command reply except successful NASA posts is scheduled for deletion for everyone one hour later, including GIFs and error replies. The bot stores only the message references and deletion times in `scheduled-deletions.json`, so it can finish the job after a restart; this is not a database. If WhatsApp is temporarily disconnected at the scheduled time, the bot retries after it reconnects.
 
 WhatsApp replaces a deleted message with a visible “This message was deleted” notice. It cannot undo screenshots, forwards, or media that a recipient already saved.
 
