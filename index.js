@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { createNasaScheduler, londonDate, nasaMessage } from './nasa.js';
+import { createNasaScheduler, nasaMessage, randomNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -238,7 +238,7 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
-  if (/^nasa\s*$/i.test(text)) return { name: 'nasa' };
+  if (/^nasa(?:\s|$)/i.test(text)) return { name: 'nasa', query: text.slice(4).trim() };
   if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
   if (isCoffeeCountCommand(text)) return { name: 'coffee-count' };
   if (isCoffeeCommand(text)) return { name: 'coffee' };
@@ -733,21 +733,23 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
   };
   const reply = text => sendBotMessage({ text });
   if (command.name === 'nasa') {
-    if (!nasaApiKey) {
-      await reply('NASA is not configured. Set NASA_API_KEY in the bot’s .env and restart it.');
+    if ([...command.query].length > 200) {
+      await reply('Please keep your NASA search to 200 characters or fewer.');
       return;
     }
     console.log('NASA request received.');
     try {
-      const content = await nasaMessage(londonDate(Date.now()), {
-        apiKey: nasaApiKey,
-      });
+      const content = await randomNasaMessage(command.query);
+      if (!content.image) {
+        await reply(content.text);
+        return;
+      }
       // Manual NASA posts are permanent too, just like the daily post.
       await sock.sendMessage(jid, content, { quoted: message });
-      console.log('NASA APOD sent.');
+      console.log('Random NASA image sent.');
     } catch {
       console.error('NASA request failed.');
-      await reply('Could not fetch or send today’s NASA post. It may not be available yet; please try again later.');
+      await reply('Could not fetch or send a NASA image. Please try again later.');
     }
     return;
   }

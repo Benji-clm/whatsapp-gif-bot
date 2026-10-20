@@ -173,12 +173,24 @@ explanation, source link, and credit when supplied. Video/iframe days send the
 APOD page link and description instead of an image. NASA posts are permanent:
 they bypass the bot's one-hour deletion queue.
 
-Send exactly `nasa` (any capitalization) in a private chat or group with the bot
-to request today's post immediately in that chat. This fetches the image or
-video link and full explanation again, without changing the daily schedule.
-Successful manual NASA posts are permanent too; error replies follow the normal
-one-hour deletion policy. Each request calls NASA's API, so frequent requests
-can hit your API key's rate limit.
+Send `nasa` (any capitalization) for a random image from NASA's Image and
+Video Library. It chooses from nebula, galaxy, Jupiter, Saturn, Moon, Earth,
+astronaut, Artemis, Hubble, James Webb, and rocket launch topics. Add search
+words to choose your own subject:
+
+```text
+nasa galaxy
+nasa astronaut
+nasa earth
+nasa artemis
+nasa rocket launch
+```
+
+Searches return a random image from up to the first five pages of matching
+results, with its title, description, and source link. Queries can be up to 200
+characters. This command needs no NASA API key and does not affect the daily
+APOD schedule. Successful manual NASA posts are permanent too; error replies
+follow the normal one-hour deletion policy.
 
 One sleeping Node timer schedules the next morning; there is no polling loop,
 external cron job, extra WhatsApp session, or last-posted file. Reconnecting does
@@ -198,7 +210,7 @@ NASA_API_KEY=
 
 Enter your target group's ID and your own key from [NASA](https://api.nasa.gov/).
 There is no default group or API key. Daily posts stay disabled until both are
-configured with a valid group ID; the manual `nasa` command only needs the key.
+configured with a valid group ID; the manual `nasa` command needs neither value.
 Never commit your populated `.env` or put real IDs/keys in `.env.example`. API requests and image downloads have 30-second timeouts;
 images have a 16 MiB download limit. Restart the bot after deploying these files
 or changing configuration. No test post is sent on startup.

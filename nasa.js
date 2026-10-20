@@ -76,6 +76,10 @@ export async function nasaMessage(date, { apiKey, fetchImpl = fetch } = {}) {
   // New responses use url for the article; older responses use it for the image.
   const imageUrl = httpUrl(apod.hdurl) || (!apod.permalink && httpUrl(apod.url));
   if (!imageUrl) throw new Error('NASA returned no image URL.');
+  return { image: await downloadNasaImage(imageUrl, fetchImpl), caption };
+}
+
+async function downloadNasaImage(imageUrl, fetchImpl) {
   const media = await fetchImpl(imageUrl, { signal: AbortSignal.timeout(30_000) });
   if (!media.ok || !media.headers.get('content-type')?.startsWith('image/')) {
     throw new Error('Could not download the NASA image.');
@@ -88,7 +92,43 @@ export async function nasaMessage(date, { apiKey, fetchImpl = fetch } = {}) {
     chunks.push(chunk);
   }
   if (!size) throw new Error('NASA returned an empty image.');
-  return { image: Buffer.concat(chunks), caption };
+  return Buffer.concat(chunks);
+}
+
+const TOPICS = [
+  'nebula', 'galaxy', 'jupiter', 'saturn', 'moon', 'earth', 'astronaut',
+  'artemis', 'hubble', 'james webb', 'rocket launch',
+];
+const random = items => items[Math.floor(Math.random() * items.length)];
+
+export async function randomNasaMessage(query = '', { fetchImpl = fetch } = {}) {
+  const topic = query.trim() || random(TOPICS);
+  const endpoint = new URL('https://images-api.nasa.gov/search');
+  endpoint.search = new URLSearchParams({ q: topic, media_type: 'image', page_size: '100', page: '1' });
+  const search = async page => {
+    endpoint.searchParams.set('page', String(page));
+    const response = await fetchImpl(endpoint, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`NASA image search returned HTTP ${response.status}.`);
+    return (await response.json()).collection;
+  };
+  // Check the result count first so narrow queries never select a nonexistent page.
+  let collection = await search(1);
+  const pages = Math.min(5, Math.max(1, Math.ceil((Number(collection?.metadata?.total_hits) || 0) / 100)));
+  const page = Math.floor(Math.random() * pages) + 1;
+  if (page > 1) collection = await search(page);
+  const items = Array.isArray(collection?.items) ? collection.items : [];
+  const valid = items.filter(item => item.data?.[0]?.title &&
+    item.links?.some(link => link.render === 'image' && httpUrl(link.href)));
+  if (!valid.length) return { text: 'No NASA images found. Try another search, such as nasa galaxy.' };
+  const item = random(valid);
+  const meta = item.data[0];
+  const imageUrl = item.links.find(link => link.render === 'image' && httpUrl(link.href)).href;
+  const caption = [
+    plainText(meta.title), plainText(meta.description || meta.description_508),
+    meta.photographer ? `Credit: ${plainText(meta.photographer)}` : null,
+    meta.nasa_id ? `https://images.nasa.gov/details/${encodeURIComponent(meta.nasa_id)}` : imageUrl,
+  ].filter(Boolean).join('\n\n');
+  return { image: await downloadNasaImage(imageUrl, fetchImpl), caption };
 }
 
 export function createNasaScheduler(post, {
