@@ -7,7 +7,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { createNasaScheduler, nasaMessage, randomNasaMessage } from './nasa.js';
+import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -807,6 +807,23 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
 }
 
 async function main() {
+  const options = new Set(process.argv.slice(2));
+  const validGroup = /^\d+(?:-\d+)?@g\.us$/.test(nasaGroupJid ?? '');
+  const formatUk = time => new Date(time).toLocaleString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' });
+  const safeError = error => {
+    let message = String(error?.message ?? 'Unknown error');
+    for (const secret of [nasaApiKey, nasaGroupJid]) {
+      if (secret) message = message.replaceAll(secret, '[redacted]').replaceAll(encodeURIComponent(secret), '[redacted]');
+    }
+    const code = error?.output?.statusCode ?? error?.cause?.code;
+    return `${message}${code ? ` (code ${code})` : ''}`;
+  };
+  console.log(`NASA configuration: API key ${nasaApiKey ? 'present' : 'missing'}; group ID ${validGroup ? 'valid format' : 'missing or invalid'}.`);
+  console.log(`Current UK time: ${formatUk(Date.now())}; next daily slot: ${formatUk(nextNasaPost())}.`);
+  if (options.has('--nasa-check-config')) return;
+  const groupDiagnostic = options.has('--nasa-check-group') || options.has('--nasa-test-group') || options.has('--nasa-test-trigger');
+  if (groupDiagnostic && !validGroup) throw new Error('Set a valid NASA_GROUP_JID in .env before running group diagnostics.');
+  if (options.has('--nasa-test-trigger') && !nasaApiKey) throw new Error('Set NASA_API_KEY in .env before testing the daily trigger.');
   if (!apiKey || apiKey === 'your_giphy_api_key_here') {
     throw new Error('Set GIPHY_API_KEY in .env before starting. See README.md.');
   }
@@ -814,13 +831,29 @@ async function main() {
   const { state, saveCreds } = await useMultiFileAuthState(join(projectDir, 'auth'));
   let socket;
   let connected = false;
+  let diagnosticsStarted = false;
+  const checkNasaGroup = async () => {
+    console.log('NASA group check: querying groups this account belongs to...');
+    const groups = await socket.groupFetchAllParticipating();
+    const group = Object.values(groups).find(group => group.id === nasaGroupJid);
+    if (!group) throw new Error('Configured NASA_GROUP_JID was not found among this account’s groups. Check the ID and bot membership.');
+    console.log(`NASA group found: ${group.subject}; ${group.announce ? 'admins-only posting (a test send will check permission)' : 'members can post'}.`);
+  };
   const nasaScheduler = createNasaScheduler(async date => {
+    console.log(`NASA timer fired for ${date} at ${formatUk(Date.now())}.`);
     if (!connected) throw new Error('WhatsApp is disconnected.');
+    console.log('NASA stage: fetching today’s APOD and media...');
     const content = await nasaMessage(date, { apiKey: nasaApiKey });
     if (!connected || stopping) throw new Error('WhatsApp is unavailable.');
+    console.log('NASA stage: sending APOD to configured group...');
     // Scheduled NASA posts deliberately bypass automatic reply deletion.
     await socket.sendMessage(nasaGroupJid, content);
     console.log(`NASA APOD sent for ${date}.`);
+  }, {
+    firstRunDelayMs: options.has('--nasa-test-trigger') ? 10_000 : undefined,
+    onSchedule: due => console.log(`NASA timer scheduled: ${formatUk(due)}.`),
+    onSkip: due => console.error(`NASA timer missed ${formatUk(due)} by at least a minute; skipping to the next day.`),
+    onError: error => console.error(`Daily NASA post failed: ${safeError(error)} Next attempt is tomorrow at 09:00 UK time.`),
   });
   let reconnectTimer;
   let attempts = 0;
@@ -940,6 +973,20 @@ async function main() {
         attempts = 0;
         console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
         void deletionScheduler.deleteDueMessages();
+        if (groupDiagnostic && !diagnosticsStarted) {
+          diagnosticsStarted = true;
+          messageQueue = messageQueue.then(async () => {
+            await checkNasaGroup();
+            if (options.has('--nasa-test-group')) {
+              await sock.sendMessage(nasaGroupJid, { text: 'NASA bot group test: the configured group received this message. The daily schedule is unchanged.' });
+              console.log('NASA group test sent. Confirm it appeared in the intended group.');
+            }
+            if (options.has('--nasa-test-trigger')) {
+              console.log('NASA trigger test: starting a 10-second timer using the daily posting path.');
+              nasaScheduler.start();
+            }
+          }).catch(error => console.error(`NASA diagnostic failed: ${safeError(error)}`));
+        }
       }
       if (connection === 'close') {
         connected = false;
@@ -967,8 +1014,8 @@ async function main() {
       }
     });
   }
-  if (nasaApiKey && /^\d+(?:-\d+)?@g\.us$/.test(nasaGroupJid ?? '')) {
-    nasaScheduler.start();
+  if (nasaApiKey && validGroup) {
+    if (!options.has('--nasa-test-trigger')) nasaScheduler.start();
   } else {
     console.log('Daily NASA posts disabled: set NASA_API_KEY and a valid NASA_GROUP_JID in .env.');
   }

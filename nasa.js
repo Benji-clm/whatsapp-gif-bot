@@ -134,19 +134,26 @@ export async function randomNasaMessage(query = '', { fetchImpl = fetch } = {}) 
 export function createNasaScheduler(post, {
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   onError = () => console.error('Daily NASA post failed; next attempt is tomorrow at 09:00 UK time.'),
+  firstRunDelayMs,
+  onSchedule = () => {},
+  onSkip = () => {},
 } = {}) {
   let timer;
   let stopped = true;
   let running;
   const schedule = () => {
     if (stopped) return;
-    const due = nextNasaPost(now());
+    const due = firstRunDelayMs === undefined ? nextNasaPost(now()) : now() + firstRunDelayMs;
+    firstRunDelayMs = undefined;
+    onSchedule(due);
     timer = setTimer(async () => {
       if (stopped) return;
       // A suspended machine should not replay an old morning's post on waking.
       if (now() >= due && now() < due + 60_000) {
         running = Promise.resolve().then(() => post(londonDate(due))).catch(onError);
         await running;
+      } else {
+        onSkip(due);
       }
       schedule();
     }, due - now());

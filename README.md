@@ -215,6 +215,45 @@ Never commit your populated `.env` or put real IDs/keys in `.env.example`. API r
 images have a 16 MiB download limit. Restart the bot after deploying these files
 or changing configuration. No test post is sent on startup.
 
+### Diagnose the daily NASA job
+
+Run these in the project directory on the machine that hosts the bot, after
+deploying the updated files. Configuration checks do not connect to WhatsApp:
+
+```sh
+npm start -- --nasa-check-config
+```
+
+This prints whether the API key is present and the group ID has valid syntax,
+plus current UK time and the next 09:00 slot. It does not print the key or ID.
+A valid format alone does not prove that the group exists or the bot belongs to it.
+
+**Stop the existing bot before running any of the following commands**, since
+they open the same WhatsApp session. Run one command at a time; press Ctrl+C
+before switching commands. They remain running as the bot after the diagnostic.
+
+```sh
+npm start -- --nasa-check-group
+npm start -- --nasa-test-group
+npm start -- --nasa-test-trigger
+```
+
+- `--nasa-check-group`: checks the configured ID against groups this account
+  belongs to, and prints the matching group name and posting restriction. Sends
+  no diagnostic message.
+- `--nasa-test-group`: performs that check, then sends a permanent plain-text
+  test message to the configured group, without calling NASA. Confirm it appears
+  in the intended group to check the destination and posting permissions.
+- `--nasa-test-trigger`: checks membership, then starts a 10-second timer after
+  connecting. It uses the same timer callback and APOD posting path as the daily
+  job and sends a permanent APOD post. Afterward it schedules the next 09:00 job.
+
+Normal startup now logs the next scheduled time. At trigger time, logs distinguish
+timer firing, APOD fetching, sending, disconnection, and failures. Missed jobs
+still do not catch up: a bot started after 09:00 waits until the following day.
+Restore your normal service after finishing diagnostics; remove test flags from
+its startup command to avoid sending another test after every restart.
+
 ## Automatic reply deletion
 
 Every command reply except successful NASA posts is scheduled for deletion for everyone one hour later, including GIFs and error replies. The bot stores only the message references and deletion times in `scheduled-deletions.json`, so it can finish the job after a restart; this is not a database. If WhatsApp is temporarily disconnected at the scheduled time, the bot retries after it reconnects.
