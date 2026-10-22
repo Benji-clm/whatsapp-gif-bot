@@ -23,6 +23,7 @@ const nasaApiKey = process.env.NASA_API_KEY?.trim();
 const nasaGroupJid = process.env.NASA_GROUP_JID?.trim();
 const tflApiKey = process.env.TFL_APP_KEY?.trim();
 const tempDir = join(projectDir, 'tmp');
+const nasaPostedPath = join(projectDir, 'nasa-last-post.json');
 const coffeeUsagePath = join(projectDir, 'coffee-usage.json');
 const scheduledDeletionsPath = join(projectDir, 'scheduled-deletions.json');
 const logger = pino({ level: 'warn' });
@@ -839,6 +840,13 @@ async function main() {
     if (!group) throw new Error('Configured NASA_GROUP_JID was not found among this account’s groups. Check the ID and bot membership.');
     console.log(`NASA group found: ${group.subject}; ${group.announce ? 'admins-only posting (a test send will check permission)' : 'members can post'}.`);
   };
+  let lastPostedDate = null;
+  try {
+    const saved = JSON.parse(await readFile(nasaPostedPath, 'utf8'));
+    if (saved.group === nasaGroupJid && /^\d{4}-\d{2}-\d{2}$/.test(saved.date ?? '')) lastPostedDate = saved.date;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw new Error('Could not read nasa-last-post.json; check the file before restarting.');
+  }
   const nasaScheduler = createNasaScheduler(async date => {
     console.log(`NASA timer fired for ${date} at ${formatUk(Date.now())}.`);
     if (!connected) throw new Error('WhatsApp is disconnected.');
@@ -851,9 +859,13 @@ async function main() {
     console.log(`NASA APOD sent for ${date}.`);
   }, {
     firstRunDelayMs: options.has('--nasa-test-trigger') ? 10_000 : undefined,
+    lastPostedDate,
+    savePostedDate: async date => {
+      await writeFile(`${nasaPostedPath}.tmp`, JSON.stringify({ group: nasaGroupJid, date }), { mode: 0o600 });
+      await rename(`${nasaPostedPath}.tmp`, nasaPostedPath);
+    },
     onSchedule: due => console.log(`NASA timer scheduled: ${formatUk(due)}.`),
-    onSkip: due => console.error(`NASA timer missed ${formatUk(due)} by at least a minute; skipping to the next day.`),
-    onError: error => console.error(`Daily NASA post failed: ${safeError(error)} Next attempt is tomorrow at 09:00 UK time.`),
+    onError: error => console.error(`Daily NASA post failed: ${safeError(error)} Unsent posts retry in five minutes.`),
   });
   let reconnectTimer;
   let attempts = 0;
@@ -973,6 +985,7 @@ async function main() {
         attempts = 0;
         console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
         void deletionScheduler.deleteDueMessages();
+        if (nasaApiKey && validGroup && !options.has('--nasa-test-trigger')) nasaScheduler.start();
         if (groupDiagnostic && !diagnosticsStarted) {
           diagnosticsStarted = true;
           messageQueue = messageQueue.then(async () => {
@@ -1015,7 +1028,7 @@ async function main() {
     });
   }
   if (nasaApiKey && validGroup) {
-    if (!options.has('--nasa-test-trigger')) nasaScheduler.start();
+    console.log('Daily NASA posting enabled: 09:00 UK, with same-day catch-up and five-minute retries.');
   } else {
     console.log('Daily NASA posts disabled: set NASA_API_KEY and a valid NASA_GROUP_JID in .env.');
   }

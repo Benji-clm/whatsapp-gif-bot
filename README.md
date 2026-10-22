@@ -192,13 +192,18 @@ characters. This command needs no NASA API key and does not affect the daily
 APOD schedule. Successful manual NASA posts are permanent too; error replies
 follow the normal one-hour deletion policy.
 
-One sleeping Node timer schedules the next morning; there is no polling loop,
-external cron job, extra WhatsApp session, or last-posted file. Reconnecting does
-not create another timer. Run only one bot instance. The bot and WhatsApp
-connection must be available at 09:00: failed posts are logged and skipped,
-with no catch-up or retries until the following morning. A timer delayed by a
-suspended machine by a minute or more is also skipped. Restarting after 09:00
-schedules tomorrow's post.
+One sleeping Node timer schedules the next morning. Failed posts retry every
+five minutes. After a restart or delayed timer, the bot catches up with today's
+post if it is already past 09:00 UK time; it never replays older days. Startup
+waits for the WhatsApp connection before scheduling. A private, gitignored
+`nasa-last-post.json` records the last successful date and destination, so normal
+restarts do not repeat successful posts. Keep this file when deploying and run
+only one bot instance. A crash between sending and saving, or an ambiguous
+WhatsApp send failure, can still cause a duplicate.
+
+On the first deployment of this catch-up behavior, no success record exists, so
+starting after 09:00 will send today's APOD. A successful trigger test records
+that date too. Manual random-image requests do not affect this record.
 
 Set both values in your private, gitignored `.env` (blank examples are also in
 `.env.example`):
@@ -225,7 +230,7 @@ npm start -- --nasa-check-config
 ```
 
 This prints whether the API key is present and the group ID has valid syntax,
-plus current UK time and the next 09:00 slot. It does not print the key or ID.
+plus current UK time and the next 09:00 slot (an unsent post may catch up sooner). It does not print the key or ID.
 A valid format alone does not prove that the group exists or the bot belongs to it.
 
 **Stop the existing bot before running any of the following commands**, since
@@ -249,8 +254,7 @@ npm start -- --nasa-test-trigger
   job and sends a permanent APOD post. Afterward it schedules the next 09:00 job.
 
 Normal startup now logs the next scheduled time. At trigger time, logs distinguish
-timer firing, APOD fetching, sending, disconnection, and failures. Missed jobs
-still do not catch up: a bot started after 09:00 waits until the following day.
+timer firing, APOD fetching, sending, disconnection, and failures. Unsent posts retry every five minutes and catch up after a restart past 09:00.
 Restore your normal service after finishing diagnostics; remove test flags from
 its startup command to avoid sending another test after every restart.
 

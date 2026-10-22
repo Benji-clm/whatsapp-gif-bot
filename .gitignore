@@ -13,3 +13,6 @@ coffee-usage.json
 coffee-usage.json.tmp
 *.log
 .DS_Store
+
+nasa-last-post.json
+nasa-last-post.json.tmp

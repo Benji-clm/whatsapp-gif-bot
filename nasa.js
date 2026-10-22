@@ -133,30 +133,47 @@ export async function randomNasaMessage(query = '', { fetchImpl = fetch } = {}) 
 
 export function createNasaScheduler(post, {
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  onError = () => console.error('Daily NASA post failed; next attempt is tomorrow at 09:00 UK time.'),
+  onError = error => console.error('Daily NASA post failed:', error.message),
   firstRunDelayMs,
+  lastPostedDate = null,
+  savePostedDate = async () => {},
   onSchedule = () => {},
-  onSkip = () => {},
 } = {}) {
   let timer;
   let stopped = true;
   let running;
-  const schedule = () => {
+  const eligible = time => Number(parts(time).hour) >= 9 && londonDate(time) !== lastPostedDate;
+  const schedule = (retry = false) => {
     if (stopped) return;
-    const due = firstRunDelayMs === undefined ? nextNasaPost(now()) : now() + firstRunDelayMs;
+    const time = now();
+    const forced = firstRunDelayMs !== undefined;
+    const due = forced ? time + firstRunDelayMs
+      : retry ? time + 5 * 60_000
+      : eligible(time) ? time : nextNasaPost(time);
     firstRunDelayMs = undefined;
     onSchedule(due);
-    timer = setTimer(async () => {
+    timer = setTimer(() => {
       if (stopped) return;
-      // A suspended machine should not replay an old morning's post on waking.
-      if (now() >= due && now() < due + 60_000) {
-        running = Promise.resolve().then(() => post(londonDate(due))).catch(onError);
-        await running;
-      } else {
-        onSkip(due);
-      }
-      schedule();
-    }, due - now());
+      running = (async () => {
+        let failed = false;
+        // Evaluate the current day after a delayed timer; never replay yesterday.
+        if (forced || eligible(now())) {
+          const date = londonDate(now());
+          try {
+            await post(date);
+            lastPostedDate = date;
+            // Keep the in-memory success even if disk persistence fails.
+            try { await savePostedDate(date); }
+            catch (error) { onError(new Error(`Post sent, but could not save its date: ${error.message}`)); }
+          } catch (error) {
+            failed = true;
+            onError(error);
+          }
+        }
+        schedule(failed);
+      })();
+      return running;
+    }, Math.max(0, due - now()));
   };
   return {
     start() {
