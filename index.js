@@ -10,7 +10,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
-import { CoffeeAccountability, coffeeReminder } from './coffee-accountability.js';
+import { CoffeeAccountability, coffeeReminder, coffeeWarning } from './coffee-accountability.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -919,8 +919,8 @@ async function main() {
   const scheduleCoffeeCheck = () => {
     clearTimeout(coffeeTimer);
     if (stopping) return;
-    const deadlines = coffeeAccountability.users.flatMap(user => user.deadline === null ? [] : [user.deadline]);
-    if (coffeeAccountability.users.some(user => user.reminderPending)) deadlines.push(Date.now() + 60_000);
+    const deadlines = coffeeAccountability.users.flatMap(user => [user.deadline, user.warningAt].filter(time => time !== null));
+    if (coffeeAccountability.users.some(user => user.reminderPending || user.warningPending)) deadlines.push(Date.now() + 60_000);
     if (!deadlines.length) return;
     coffeeTimer = setTimeout(() => {
       messageQueue = messageQueue.then(checkCoffeeDeadlines).catch(error => {
@@ -932,15 +932,19 @@ async function main() {
     if (stopping) return;
     if (coffeeAccountability.expire()) await saveCoffeeUsage();
     if (!connected) return;
-    for (const user of coffeeAccountability.users.filter(user => user.reminderPending)) {
-      try {
-        const recipient = user.ids.find(id => id.endsWith('@s.whatsapp.net')) ?? user.ids[0];
-        const sent = await socket.sendMessage(recipient, { text: coffeeReminder(user.strikes) });
-        user.reminderPending = false;
-        await saveCoffeeUsage();
-        await trackSentMessage(sent.key);
-      } catch {
-        console.error('Could not send a private coffee reminder; retrying in one minute.');
+    for (const user of coffeeAccountability.users) {
+      for (const notification of ['reminderPending', 'warningPending']) {
+        if (!user[notification]) continue;
+        try {
+          const recipient = user.ids.find(id => id.endsWith('@s.whatsapp.net')) ?? user.ids[0];
+          const text = notification === 'warningPending' ? coffeeWarning() : coffeeReminder(user.strikes);
+          const sent = await socket.sendMessage(recipient, { text });
+          user[notification] = false;
+          await saveCoffeeUsage();
+          await trackSentMessage(sent.key);
+        } catch {
+          console.error('Could not send a private coffee reminder; retrying in one minute.');
+        }
       }
     }
   };
