@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import makeWASocket, {
   DisconnectReason,
+  jidNormalizedUser,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   useMultiFileAuthState,
@@ -9,6 +10,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
+import { CoffeeAccountability, coffeeReminder } from './coffee-accountability.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -177,10 +179,11 @@ async function loadCoffeeUsage() {
       day: stored.day,
       usedCount: Math.min(stored.usedCount, COFFEE_DAILY_LIMIT),
       lastUsedAt: Number.isSafeInteger(stored.lastUsedAt) && stored.lastUsedAt >= 0 ? stored.lastUsedAt : null,
+      coffeeUsers: new CoffeeAccountability(stored.coffeeUsers).users,
     };
   } catch (error) {
-    if (error.code !== 'ENOENT') console.error('Could not load coffee usage:', error.message);
-    return { day: coffeeUsageDay(), usedCount: 0, lastUsedAt: null };
+    if (error.code !== 'ENOENT') throw new Error(`Could not load coffee usage: ${error.message}`);
+    return { day: coffeeUsageDay(), usedCount: 0, lastUsedAt: null, coffeeUsers: [] };
   }
 }
 
@@ -720,6 +723,22 @@ async function handleTfl(input, reply) {
   }
 }
 
+async function coffeeSenderIds(sock, message) {
+  const group = message.key.remoteJid.endsWith('@g.us');
+  const primary = group ? message.key.participant : message.key.remoteJid;
+  const alternate = group ? message.key.participantAlt : message.key.remoteJidAlt;
+  const ids = [primary, alternate].filter(Boolean).map(jidNormalizedUser)
+    .filter(id => /@(s\.whatsapp\.net|lid)$/.test(id));
+  if (!ids.length) throw new Error('Missing coffee sender identity');
+  // Link private-chat and group addresses for the same person.
+  for (const id of [...ids]) {
+    const mapping = sock.signalRepository.lidMapping;
+    const other = id.endsWith('@lid') ? await mapping.getPNForLID(id) : await mapping.getLIDForPN(id);
+    if (other) ids.push(jidNormalizedUser(other));
+  }
+  return [...new Set(ids)];
+}
+
 async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
@@ -755,7 +774,7 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
     return;
   }
   if (command.name === 'coffee-used') {
-    await markCoffeeUsed(sendBotMessage);
+    await markCoffeeUsed(sendBotMessage, await coffeeSenderIds(sock, message));
     return;
   }
   if (command.name === 'coffee-count') {
@@ -763,7 +782,7 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
     return;
   }
   if (command.name === 'coffee') {
-    await requestCoffee(sendBotMessage);
+    await requestCoffee(sendBotMessage, await coffeeSenderIds(sock, message));
     return;
   }
   if (command.name === 'tfl') {
@@ -874,6 +893,8 @@ async function main() {
   let messageQueue = Promise.resolve();
   let coffeeWrites = Promise.resolve();
   let coffeeUsage = await loadCoffeeUsage();
+  const coffeeAccountability = new CoffeeAccountability(coffeeUsage.coffeeUsers);
+  let coffeeTimer;
   const deletionScheduler = createDeletionScheduler(() => socket);
   await deletionScheduler.load();
   const trackSentMessage = key => deletionScheduler.track(key).catch(error => {
@@ -881,7 +902,7 @@ async function main() {
   });
   const currentCoffeeUsage = () => {
     const today = coffeeUsageDay();
-    if (coffeeUsage.day !== today) coffeeUsage = { day: today, usedCount: 0, lastUsedAt: null };
+    if (coffeeUsage.day !== today) coffeeUsage = { ...coffeeUsage, day: today, usedCount: 0 };
     return coffeeUsage;
   };
   const saveCoffeeUsage = () => {
@@ -895,7 +916,42 @@ async function main() {
     });
     return coffeeWrites;
   };
-  const requestCoffee = async send => {
+  const scheduleCoffeeCheck = () => {
+    clearTimeout(coffeeTimer);
+    if (stopping) return;
+    const deadlines = coffeeAccountability.users.flatMap(user => user.deadline === null ? [] : [user.deadline]);
+    if (coffeeAccountability.users.some(user => user.reminderPending)) deadlines.push(Date.now() + 60_000);
+    if (!deadlines.length) return;
+    coffeeTimer = setTimeout(() => {
+      messageQueue = messageQueue.then(checkCoffeeDeadlines).catch(error => {
+        console.error('Could not process coffee deadlines:', error.message);
+      }).finally(scheduleCoffeeCheck);
+    }, Math.max(0, Math.min(...deadlines) - Date.now()));
+  };
+  const checkCoffeeDeadlines = async () => {
+    if (stopping) return;
+    if (coffeeAccountability.expire()) await saveCoffeeUsage();
+    if (!connected) return;
+    for (const user of coffeeAccountability.users.filter(user => user.reminderPending)) {
+      try {
+        const recipient = user.ids.find(id => id.endsWith('@s.whatsapp.net')) ?? user.ids[0];
+        const sent = await socket.sendMessage(recipient, { text: coffeeReminder(user.strikes) });
+        user.reminderPending = false;
+        await saveCoffeeUsage();
+        await trackSentMessage(sent.key);
+      } catch {
+        console.error('Could not send a private coffee reminder; retrying in one minute.');
+      }
+    }
+  };
+  const requestCoffee = async (send, senderIds) => {
+    const user = coffeeAccountability.user(senderIds);
+    await checkCoffeeDeadlines();
+    scheduleCoffeeCheck();
+    if (coffeeAccountability.banned(user)) {
+      await send({ text: 'You are banned from using "coffee" after missing two "coffee used" deadlines.' });
+      return;
+    }
     const usage = currentCoffeeUsage();
     if (usage.usedCount >= COFFEE_DAILY_LIMIT) {
       await send({ text: `Coffee limit reached for today (${COFFEE_DAILY_LIMIT}/${COFFEE_DAILY_LIMIT}). Try again tomorrow.` });
@@ -903,14 +959,25 @@ async function main() {
     }
     const warning = coffeeCooldownWarning(usage.lastUsedAt);
     if (warning) await send({ text: warning });
-    if (!await handleCoffee(send, process.env, `Pret Subscription QR code ☕\nUsed today: ${usage.usedCount}/${COFFEE_DAILY_LIMIT}`)) return;
+    const instructions = warning ? '' : '\nSend "coffee used" within 5 minutes. Two missed deadlines result in a coffee ban.';
+    if (!await handleCoffee(send, process.env, `Pret Subscription QR code ☕\nUsed today: ${usage.usedCount}/${COFFEE_DAILY_LIMIT}${instructions}`)) return;
+    // A QR requested during cooldown never creates or resets a deadline.
+    if (coffeeAccountability.requested(user, Date.now(), Boolean(warning))) {
+      await saveCoffeeUsage();
+      scheduleCoffeeCheck();
+    }
     console.log(`Coffee QR sent (${usage.usedCount}/${COFFEE_DAILY_LIMIT} used today).`);
   };
   const showCoffeeCount = async send => {
     const usage = currentCoffeeUsage();
     await send({ text: `Coffee uses today: ${usage.usedCount}/${COFFEE_DAILY_LIMIT}.` });
   };
-  const markCoffeeUsed = async send => {
+  const markCoffeeUsed = async (send, senderIds) => {
+    const user = coffeeAccountability.user(senderIds);
+    await checkCoffeeDeadlines();
+    coffeeAccountability.used(user);
+    await saveCoffeeUsage();
+    scheduleCoffeeCheck();
     const usage = currentCoffeeUsage();
     if (usage.usedCount >= COFFEE_DAILY_LIMIT) {
       await send({ text: `Coffee is already at ${COFFEE_DAILY_LIMIT}/${COFFEE_DAILY_LIMIT} for today.` });
@@ -930,6 +997,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     clearTimeout(reconnectTimer);
+    clearTimeout(coffeeTimer);
     console.log('Stopping bot...');
     await nasaScheduler.stop();
     await messageQueue;
@@ -985,6 +1053,9 @@ async function main() {
         attempts = 0;
         console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
         void deletionScheduler.deleteDueMessages();
+        messageQueue = messageQueue.then(checkCoffeeDeadlines).catch(error => {
+          console.error('Could not process coffee deadlines:', error.message);
+        }).finally(scheduleCoffeeCheck);
         if (nasaApiKey && validGroup && !options.has('--nasa-test-trigger')) nasaScheduler.start();
         if (groupDiagnostic && !diagnosticsStarted) {
           diagnosticsStarted = true;
@@ -1032,6 +1103,7 @@ async function main() {
   } else {
     console.log('Daily NASA posts disabled: set NASA_API_KEY and a valid NASA_GROUP_JID in .env.');
   }
+  scheduleCoffeeCheck();
   connect();
 }
 

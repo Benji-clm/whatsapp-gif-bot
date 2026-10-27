@@ -6,7 +6,8 @@
   "description": "A small private WhatsApp GIF bot powered by GIPHY",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check coffee.js && node --check nasa.js"
+    "check": "node --check index.js && node --check coffee.js && node --check coffee-accountability.js && node --check nasa.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=22"
