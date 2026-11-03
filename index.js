@@ -8,6 +8,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import { createStupidCounter, parseStupidCommand } from './stupid.js';
 import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { CoffeeAccountability, coffeeReminder, coffeeWarning } from './coffee-accountability.js';
@@ -242,6 +243,8 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
+  const stupidCommand = parseStupidCommand(text);
+  if (stupidCommand) return stupidCommand;
   if (/^nasa(?:\s|$)/i.test(text)) return { name: 'nasa', query: text.slice(4).trim() };
   if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
   if (isCoffeeCountCommand(text)) return { name: 'coffee-count' };
@@ -739,7 +742,7 @@ async function coffeeSenderIds(sock, message) {
   return [...new Set(ids)];
 }
 
-async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount) {
+async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
@@ -752,6 +755,10 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
     return sent;
   };
   const reply = text => sendBotMessage({ text });
+  if (command.name === 'stupid-counter') {
+    await handleStupid(command, reply);
+    return;
+  }
   if (command.name === 'nasa') {
     if ([...command.query].length > 200) {
       await reply('Please keep your NASA search to 200 characters or fewer.');
@@ -848,6 +855,7 @@ async function main() {
     throw new Error('Set GIPHY_API_KEY in .env before starting. See README.md.');
   }
   await mkdir(tempDir, { recursive: true });
+  const handleStupid = await createStupidCounter(join(projectDir, 'stupid-counters.json'));
   const { state, saveCreds } = await useMultiFileAuthState(join(projectDir, 'auth'));
   let socket;
   let connected = false;
@@ -1097,7 +1105,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });

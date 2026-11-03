@@ -12,6 +12,8 @@ coffee-cooldown.json.tmp
 coffee-usage.json
 coffee-usage.json.tmp
 *.log
+stupid-counters.json
+stupid-counters.json.tmp
 .DS_Store
 
 nasa-last-post.json

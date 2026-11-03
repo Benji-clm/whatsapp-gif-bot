@@ -166,6 +166,12 @@ should be treated as private. The implementation reproduces the inspected
 Android app's device-time dynamic QR algorithm; live app comparison and till
 acceptance remain unverified.
 
+## Stupid counters
+
+Send `stupid` to increment the global counter, or `stupid <name>` to increment that person's counter. Send `stupid leaderboard` to see the total, global counter, and everyone ranked by count. The total is the global counter plus all named counters. Commands and names are case-insensitive, so `stupid Ben` and `STUPID ben` share a counter. Counters are shared across chats and persist across restarts in the ignored `stupid-counters.json` file.
+
+To rename the command, edit `STUPID_COMMAND` near the top of `stupid.js`, then restart the bot. The existing counts remain saved.
+
 ## Daily NASA post
 
 At **09:00 Europe/London** every day, the running bot posts NASA's Astronomy
