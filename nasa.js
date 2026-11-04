@@ -36,6 +36,8 @@ function plainText(value) {
     }).replace(/\u00a0/g, ' ').trim();
 }
 
+export const NASA_IMAGE_MAX_BYTES = 48 * 1024 * 1024;
+
 function isGenericNasaImage(apod) {
   return /^NASA(?: Science)?$/i.test(plainText(apod.title)) ||
     [apod.hdurl, apod.url].some(url => typeof url === 'string' &&
@@ -75,8 +77,30 @@ export async function nasaMessage(date, { apiKey, fetchImpl = fetch } = {}) {
   }
   // New responses use url for the article; older responses use it for the image.
   const imageUrl = httpUrl(apod.hdurl) || (!apod.permalink && httpUrl(apod.url));
-  if (!imageUrl) throw new Error('NASA returned no image URL.');
-  return { image: await downloadNasaImage(imageUrl, fetchImpl), caption };
+  const fallbackText = !link && imageUrl ? `${caption}\n\n${imageUrl}` : caption;
+  return nasaImageOrText(imageUrl, fallbackText, fetchImpl);
+}
+
+async function nasaImageOrText(imageUrl, caption, fetchImpl) {
+  try {
+    if (!imageUrl) throw new Error('NASA returned no image URL.');
+    return { image: await downloadNasaImage(imageUrl, fetchImpl), caption };
+  } catch (error) {
+    console.warn(`NASA image unavailable; using a text post: ${error.message}`);
+    return { text: caption };
+  }
+}
+
+// A failed attachment must not prevent delivery of the day's APOD description.
+// If the text send also fails, let the scheduler retry after reconnecting.
+export async function sendNasaMessage(send, content) {
+  try {
+    return await send(content);
+  } catch (error) {
+    if (!content.image) throw error;
+    console.warn('NASA image send failed; trying a text post.');
+    return send({ text: content.caption });
+  }
 }
 
 async function downloadNasaImage(imageUrl, fetchImpl) {
@@ -84,11 +108,15 @@ async function downloadNasaImage(imageUrl, fetchImpl) {
   if (!media.ok || !media.headers.get('content-type')?.startsWith('image/')) {
     throw new Error('Could not download the NASA image.');
   }
+  if (Number(media.headers.get('content-length')) > NASA_IMAGE_MAX_BYTES) {
+    await media.body?.cancel();
+    throw new Error('NASA image exceeds the 48 MiB download limit.');
+  }
   const chunks = [];
   let size = 0;
   for await (const chunk of media.body) {
     size += chunk.length;
-    if (size > 16 * 1024 * 1024) throw new Error('NASA image exceeds the 16 MiB download limit.');
+    if (size > NASA_IMAGE_MAX_BYTES) throw new Error('NASA image exceeds the 48 MiB download limit.');
     chunks.push(chunk);
   }
   if (!size) throw new Error('NASA returned an empty image.');
@@ -128,7 +156,7 @@ export async function randomNasaMessage(query = '', { fetchImpl = fetch } = {}) 
     meta.photographer ? `Credit: ${plainText(meta.photographer)}` : null,
     meta.nasa_id ? `https://images.nasa.gov/details/${encodeURIComponent(meta.nasa_id)}` : imageUrl,
   ].filter(Boolean).join('\n\n');
-  return { image: await downloadNasaImage(imageUrl, fetchImpl), caption };
+  return nasaImageOrText(imageUrl, caption, fetchImpl);
 }
 
 export function createNasaScheduler(post, {

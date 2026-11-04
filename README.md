@@ -225,7 +225,13 @@ Enter your target group's ID and your own key from [NASA](https://api.nasa.gov/)
 There is no default group or API key. Daily posts stay disabled until both are
 configured with a valid group ID; the manual `nasa` command needs neither value.
 Never commit your populated `.env` or put real IDs/keys in `.env.example`. API requests and image downloads have 30-second timeouts;
-images have a 16 MiB download limit. Restart the bot after deploying these files
+NASA images have a 48 MiB download limit. If an image exceeds that limit, fails
+to download, or cannot be sent as an attachment, the bot sends the description
+and source link as text. A successful text fallback completes the daily post;
+it does not keep retrying the oversized image. API failures and failures to
+deliver the text still retry. Large images can temporarily use more memory
+than their file size while downloading and preparing the attachment.
+Restart the bot after deploying these files
 or changing configuration. No test post is sent on startup.
 
 ### Diagnose the daily NASA job

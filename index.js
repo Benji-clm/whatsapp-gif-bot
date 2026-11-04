@@ -9,7 +9,7 @@ import makeWASocket, {
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { createStupidCounter, parseStupidCommand } from './stupid.js';
-import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage } from './nasa.js';
+import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage, sendNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
 import { CoffeeAccountability, coffeeReminder, coffeeWarning } from './coffee-accountability.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -772,7 +772,7 @@ async function handleMessage(sock, message, trackSentMessage, requestCoffee, mar
         return;
       }
       // Manual NASA posts are permanent too, just like the daily post.
-      await sock.sendMessage(jid, content, { quoted: message });
+      await sendNasaMessage(content => sock.sendMessage(jid, content, { quoted: message }), content);
       console.log('Random NASA image sent.');
     } catch {
       console.error('NASA request failed.');
@@ -882,7 +882,7 @@ async function main() {
     if (!connected || stopping) throw new Error('WhatsApp is unavailable.');
     console.log('NASA stage: sending APOD to configured group...');
     // Scheduled NASA posts deliberately bypass automatic reply deletion.
-    await socket.sendMessage(nasaGroupJid, content);
+    await sendNasaMessage(content => socket.sendMessage(nasaGroupJid, content), content);
     console.log(`NASA APOD sent for ${date}.`);
   }, {
     firstRunDelayMs: options.has('--nasa-test-trigger') ? 10_000 : undefined,
