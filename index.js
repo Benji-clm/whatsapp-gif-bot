@@ -8,6 +8,7 @@ import makeWASocket, {
 } from 'baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import { createAccessControl, normalizeUserId, parseAdminCommand, userIds } from './admin.js';
 import { createStupidCounter, parseStupidCommand } from './stupid.js';
 import { createNasaScheduler, nasaMessage, nextNasaPost, randomNasaMessage, sendNasaMessage } from './nasa.js';
 import { COFFEE_DAILY_LIMIT, coffeeCooldownWarning, coffeeUsageDay, handleCoffee, isCoffeeCommand, isCoffeeCountCommand, isCoffeeUsedCommand } from './coffee.js';
@@ -243,6 +244,8 @@ async function downloadGif(url, destination) {
 }
 
 function parseCommand(text) {
+  const adminCommand = parseAdminCommand(text);
+  if (adminCommand) return adminCommand;
   const stupidCommand = parseStupidCommand(text);
   if (stupidCommand) return stupidCommand;
   if (/^nasa(?:\s|$)/i.test(text)) return { name: 'nasa', query: text.slice(4).trim() };
@@ -742,19 +745,43 @@ async function coffeeSenderIds(sock, message) {
   return [...new Set(ids)];
 }
 
-async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid) {
+async function handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid, access) {
   const jid = message.key.remoteJid;
   if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
   const content = normalizeMessageContent(message.message);
   const text = content?.conversation ?? content?.extendedTextMessage?.text ?? '';
   const command = parseCommand(text);
   if (!command) return;
+  const group = jid.endsWith('@g.us');
+  const senderIds = await userIds(sock, group
+    ? [message.key.participant, message.key.participantAlt]
+    : [jid, message.key.remoteJidAlt]);
+  if (!senderIds.length || access.isBanned(senderIds)) return;
   const sendBotMessage = async (content, options = {}) => {
     const sent = await sock.sendMessage(jid, content, { quoted: message, ...options });
     await trackSentMessage(sent.key);
     return sent;
   };
   const reply = text => sendBotMessage({ text });
+  if (command.name === 'admin') {
+    if (!access.isAdmin(senderIds)) {
+      await reply('This command is for bot admins only.');
+      return;
+    }
+    if (command.action === 'clear') {
+      await handleStupid(command, reply);
+      return;
+    }
+    const mentions = [...new Set(content?.extendedTextMessage?.contextInfo?.mentionedJid ?? [])];
+    if (mentions.length !== 1 || !normalizeUserId(mentions[0])) {
+      await reply(`Usage: ${command.action} @person (select one person from the WhatsApp mention menu).`);
+      return;
+    }
+    const targetIds = await userIds(sock, mentions);
+    await access.setBanned(targetIds, command.action === 'ban');
+    await reply(command.action === 'ban' ? 'User banned from using the bot.' : 'User unbanned.');
+    return;
+  }
   if (command.name === 'stupid-counter') {
     await handleStupid(command, reply);
     return;
@@ -856,6 +883,7 @@ async function main() {
   }
   await mkdir(tempDir, { recursive: true });
   const handleStupid = await createStupidCounter(join(projectDir, 'stupid-counters.json'));
+  const access = await createAccessControl(join(projectDir, 'bot-bans.json'), process.env.BOT_ADMINS);
   const { state, saveCreds } = await useMultiFileAuthState(join(projectDir, 'auth'));
   let socket;
   let connected = false;
@@ -1105,7 +1133,7 @@ async function main() {
       if (type !== 'notify' || stopping) return;
       for (const message of messages) {
         messageQueue = messageQueue.then(async () => {
-          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid);
+          if (!stopping && socket === sock) await handleMessage(sock, message, trackSentMessage, requestCoffee, markCoffeeUsed, showCoffeeCount, handleStupid, access);
         }).catch(() => console.error('Could not handle/reply to a message. Check the connection and disk space.'));
       }
     });

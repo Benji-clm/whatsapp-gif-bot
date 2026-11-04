@@ -25,6 +25,24 @@ export async function createStupidCounter(path) {
   }
 
   return async (command, reply) => {
+    if (command.action === 'clear') {
+      const target = command.target.trim().replace(/\s+/g, ' ');
+      if (!target) {
+        await reply('Usage: clear <name>');
+        return;
+      }
+      const people = state.people.filter(person => person.name.toLowerCase() !== target.toLowerCase());
+      if (people.length === state.people.length) {
+        await reply(`No counter found for ${target}.`);
+        return;
+      }
+      const next = { ...state, people };
+      await writeFile(`${path}.tmp`, JSON.stringify(next, null, 2));
+      await rename(`${path}.tmp`, path);
+      state = next;
+      await reply(`Removed ${target} from the leaderboard.`);
+      return;
+    }
     if (command.leaderboard) {
       const people = [...state.people].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
       const total = state.global + people.reduce((sum, person) => sum + person.count, 0);

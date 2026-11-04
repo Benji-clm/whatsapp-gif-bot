@@ -166,6 +166,18 @@ should be treated as private. The implementation reproduces the inspected
 Android app's device-time dynamic QR algorithm; live app comparison and till
 acceptance remain unverified.
 
+## Bot admins and bans
+
+Set `BOT_ADMINS` in `.env` to a comma-separated list of international phone numbers, including country code and excluding spaces, or WhatsApp user IDs:
+
+```dotenv
+BOT_ADMINS=447700900123,447700900456@s.whatsapp.net
+```
+
+Replace these example numbers with your admins and restart the bot. IDs ending in `@lid` are also accepted. The bot uses WhatsApp's phone-number/LID mappings when available. These are bot administrators; WhatsApp group-admin status alone does not grant access. An empty list disables admin commands for everyone.
+
+Admins can use `clear <name>` to remove a named leaderboard entry and its count (case-insensitive). The global count stays the same, and the total is recalculated. Use `ban @person` or `unban @person`, selecting exactly one person from WhatsApp's mention menu. Banned users' commands are silently ignored in every chat. Bans persist in the ignored `bot-bans.json` file. These commands use the same reply auto-deletion as other bot commands.
+
 ## Stupid counters
 
 Send `stupid` to increment the global counter, or `stupid <name>` to increment that person's counter. Send `stupid leaderboard` to see the total, global counter, and everyone ranked by count. The total is the global counter plus all named counters. Commands and names are case-insensitive, so `stupid Ben` and `STUPID ben` share a counter. Counters are shared across chats and persist across restarts in the ignored `stupid-counters.json` file.

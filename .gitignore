@@ -14,6 +14,8 @@ coffee-usage.json.tmp
 *.log
 stupid-counters.json
 stupid-counters.json.tmp
+bot-bans.json
+bot-bans.json.tmp
 .DS_Store
 
 nasa-last-post.json
