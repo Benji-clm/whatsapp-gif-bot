@@ -16,6 +16,9 @@ function parseCommand(text) {
   if (/^gif(?:\s|$)/i.test(text)) {
     return { name: 'gif', query: text.slice(3).trim() };
   }
+  if (/^inshallah\s*$/i.test(text)) {
+    return { name: 'inshallah' };
+  }
   if (/^tfl(?:\s|$)/i.test(text)) {
     return { name: 'tfl', input: text.slice(3).trim() };
   }
@@ -99,6 +102,10 @@ export function createMessageHandler({ trackSentMessage, coffee, handleStupid, a
     }
     if (command.name === 'tfl') {
       await handleTfl(command.input, reply);
+      return;
+    }
+    if (command.name === 'inshallah') {
+      await reply("Allah yisma' minnak");
       return;
     }
     await handleGif(command.query, sendBotMessage);
