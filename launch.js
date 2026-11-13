@@ -49,7 +49,6 @@ export function formatLaunch(launch, now) {
   const stream = launch.vid_urls?.find(video => /^https?:\/\//i.test(video.url ?? ''))?.url;
   return [
     launch.name || launch.mission?.name || 'Unnamed launch',
-    launch.mission?.name && launch.mission.name !== launch.name ? `Mission: ${launch.mission.name}` : null,
     launch.launch_service_provider?.name ? `Provider: ${launch.launch_service_provider.name}` : null,
     timing, countdown,
     `Status: ${launch.status?.name || 'Unknown'}`,
