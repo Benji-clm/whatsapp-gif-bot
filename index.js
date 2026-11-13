@@ -13,6 +13,7 @@ import { createCoffeeService } from './coffee-service.js';
 import { createDeletionScheduler } from './message-deletion.js';
 import { createTflHandler } from './tfl.js';
 import { createGifHandler } from './gif.js';
+import { createLaunchHandler } from './launch.js';
 import { createMessageHandler } from './commands.js';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
@@ -122,6 +123,7 @@ async function main() {
     access,
     handleTfl: createTflHandler(tflApiKey),
     handleGif: createGifHandler({ apiKey, tempDir }),
+    handleLaunch: createLaunchHandler(),
   });
 
   async function stop(exitCode = 0) {
@@ -182,7 +184,7 @@ async function main() {
       if (connection === 'open') {
         connected = true;
         attempts = 0;
-        console.log('Connected. Waiting for gif <search> or tfl in private chats and groups.');
+        console.log('Connected. Waiting for commands in private chats and groups.');
         void deletionScheduler.deleteDueMessages();
         messageQueue = messageQueue.then(coffee.onConnected);
         if (nasaApiKey && validGroup && !options.has('--nasa-test-trigger')) nasaScheduler.start();

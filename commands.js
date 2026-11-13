@@ -10,6 +10,7 @@ function parseCommand(text) {
   const stupidCommand = parseStupidCommand(text);
   if (stupidCommand) return stupidCommand;
   if (/^nasa(?:\s|$)/i.test(text)) return { name: 'nasa', query: text.slice(4).trim() };
+  if (/^launch(?:\s|$)/i.test(text)) return { name: 'launch', input: text.slice(6).trim() };
   if (isCoffeeUsedCommand(text)) return { name: 'coffee-used' };
   if (isCoffeeCountCommand(text)) return { name: 'coffee-count' };
   if (isCoffeeCommand(text)) return { name: 'coffee' };
@@ -25,7 +26,7 @@ function parseCommand(text) {
   return null;
 }
 
-export function createMessageHandler({ trackSentMessage, coffee, handleStupid, access, handleTfl, handleGif }) {
+export function createMessageHandler({ trackSentMessage, coffee, handleStupid, access, handleTfl, handleGif, handleLaunch }) {
   async function handleMessage(sock, message) {
     const jid = message.key.remoteJid;
     if (message.key.fromMe || !jid || !/@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return;
@@ -102,6 +103,10 @@ export function createMessageHandler({ trackSentMessage, coffee, handleStupid, a
     }
     if (command.name === 'tfl') {
       await handleTfl(command.input, reply);
+      return;
+    }
+    if (command.name === 'launch') {
+      await handleLaunch(command.input, reply);
       return;
     }
     if (command.name === 'inshallah') {

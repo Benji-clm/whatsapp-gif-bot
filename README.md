@@ -1,6 +1,6 @@
 # Private WhatsApp bot
 
-A Node.js bot for GIFs, TfL departures and journeys, coffee QR codes, NASA pictures, and shared counters. Uses Baileys without a browser.
+A Node.js bot for GIFs, TfL departures and journeys, rocket launches, coffee QR codes, NASA pictures, and shared counters. Uses Baileys without a browser.
 
 ## Setup
 
@@ -41,12 +41,23 @@ Commands start at the beginning of the message and are case-insensitive. The bot
 | `coffee used` | Record a drink and start the 30-minute cooldown |
 | `coffee count` | Show today's recorded drinks |
 | `nasa` / `nasa galaxy` | Random NASA image / search by topic |
+| `launch` | Next launch worldwide: mission, expected UK time, T-minus, and status |
+| `launch spacex` / `launch nasa` | Next launch involving that provider or mission agency |
+| `launch live [agency]` | Up to three launches reported in flight, with available webcast links |
+| `launch status [agency]` | Latest launch whose scheduled time has passed, with its current status/outcome |
+| `launch help` | Launch command list |
 | `<counter>` / `<counter> Ben` | Increment the global / named counter |
 | `<counter> leaderboard` | Total, global count, and ranked names |
 
 The counter keyword is `STUPID_COMMAND` near the top of [stupid.js](stupid.js); replace `<counter>` with that value. Names are case-insensitive. Total = global + all named counts.
 
 TfL supports Tube, Elizabeth line, Overground, and DLR. Use full station names if a search is ambiguous. Line aliases include `hc`, `h&c`, and `picadilly`.
+
+Launch data comes from [The Space Devs / Launch Library 2](https://ll.thespacedevs.com/docs), with no API key required. Agency filters include both launch providers and mission agencies, so NASA missions on commercial rockets are included. Use an agency name or abbreviation (e.g. `ula`, `esa`, `blue origin`); ambiguous searches ask for a full name. `launch status spacex` shows SpaceX's latest scheduled launch and its reported outcome, hold, or pending confirmation. `launch live nasa` checks NASA missions currently reported in flight. A live webcast alone does not imply liftoff.
+
+Launch times use UK time (GMT/BST). NET means “no earlier than”; provisional schedules are labelled, and dates known only to a day/month/year have no precise countdown. A passed scheduled time does not imply liftoff. Data is cached for ten minutes (one minute for `live`), while countdowns are recalculated on every reply. Status updates can be delayed. A shared per-process budget of 14 API requests per rolling hour and HTTP 429 backoff protect the free API allowance of 15/hour. Agency searches can require three requests, so varied queries may temporarily exhaust the budget. The allowance is shared across chats and resets when the process restarts; other clients on the same IP also consume the upstream allowance.
+
+For development, set `LAUNCH_API_BASE_URL=https://lldev.thespacedevs.com/2.3.0/` before starting; that endpoint has stale data and no upstream rate limit. The default uses the live API.
 
 ## Optional configuration
 
@@ -100,6 +111,6 @@ Keep `.env*`, `auth/`, and state JSON files private and preserve them when deplo
 
 ## Code
 
-`index.js` handles startup and WhatsApp; `commands.js` routes commands. Features live in `tfl.js`, `gif.js`, `nasa.js`, `coffee*.js`, `stupid.js`, and `admin.js`. Reply cleanup lives in `message-deletion.js`.
+`index.js` handles startup and WhatsApp; `commands.js` routes commands. Features live in `tfl.js`, `gif.js`, `launch.js`, `nasa.js`, `coffee*.js`, `stupid.js`, and `admin.js`. Reply cleanup lives in `message-deletion.js`.
 
 Run `npm run check` to check all JavaScript syntax. Baileys is an unofficial WhatsApp client; use a spare account.
